@@ -622,6 +622,7 @@
       ref,
       set,
       update,
+      get,
       onValue,
       onDisconnect,
       remove,
@@ -672,6 +673,7 @@
 
     const LS_NAME = "nikoriTown.playerName";
     const LS_ROOM = "nikoriTown.lastRoom";
+    const LS_ROOM_CODE = "nikoriTown.lastRoomCode";
     const LS_SKIN = "nikoriTown.skin";
     const LS_MAP = "nikoriTown.currentMap";
     const LS_FLOOR = "nikoriTown.currentFloor";
@@ -771,16 +773,18 @@
       currentFloorId = MAPS[currentMapIndex].floors[0].id;
     }
 
-    const room = safeRoom(params.get("room") || localStorage.getItem(LS_ROOM) || "");
+    const roomCodeParam = safeRoomCode(params.get("roomCode") || params.get("roomId") || params.get("room") || localStorage.getItem(LS_ROOM_CODE) || localStorage.getItem(LS_ROOM) || "");
+    const room = roomCodeParam;
     const playerName = safeName(params.get("name") || localStorage.getItem(LS_NAME) || "ゲスト");
     let selectedSkin = normalizeSkin(params.get("skin") || localStorage.getItem(LS_SKIN) || "nikorihito");
 
-    if (!room) {
-      alert("ルーム名がありません。index.htmlから入り直してください。");
+    if (!/^\d{6}$/.test(room)) {
+      alert("6ケタのルーム番号がありません。index.htmlから入り直してください。");
       location.href = "./index.html";
     }
 
     localStorage.setItem(LS_ROOM, room);
+    localStorage.setItem(LS_ROOM_CODE, room);
     localStorage.setItem(LS_NAME, playerName);
     localStorage.setItem(LS_SKIN, selectedSkin);
 
@@ -992,6 +996,10 @@
     function safeName(value) {
       const name = String(value || "").trim().slice(0, 16);
       return name || "ゲスト";
+    }
+
+    function safeRoomCode(value) {
+      return String(value || "").replace(/\D/g, "").slice(0, 6);
     }
 
     function safeRoom(value) {
@@ -2027,6 +2035,17 @@
       player.skin = selectedSkin;
       player.dir = "front";
 
+      const existingState = await get(ref(db, `rooms/${room}/roomState`)).then((snapshot) => snapshot.val()).catch(() => null);
+      if (existingState?.mapId || Number.isFinite(Number(existingState?.mapIndex))) {
+        currentMapIndex = resolveMapIndex(existingState.mapId ?? existingState.mapIndex);
+        const mapData = getMapDefinition();
+        currentFloorId = mapData.type === "building"
+          ? (mapData.floors.some((floor) => floor.id === existingState.floorId) ? existingState.floorId : mapData.floors[0].id)
+          : "";
+        setPlayerToSpawn();
+        loadCurrentMapAssets();
+      }
+
       loading.hidden = true;
       chatStatus.textContent = "接続済み";
 
@@ -2051,6 +2070,9 @@
 
       await update(ref(db, `roomMeta/${room}`), {
         room,
+        roomId: room,
+        roomCode: room,
+        roomName: `ルーム ${room}`,
         passwordEnabled: false,
         updatedAt: Date.now()
       });

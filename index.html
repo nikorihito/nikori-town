@@ -24,7 +24,7 @@
 <body>
   <main class="card">
     <div class="pill">β版・テスト中 ／ Google・ゲストログイン対応</div>
-    <div class="logo-line"><div class="logo-mark">✈️</div><div><h1>ニコリタウン</h1><p class="lead">歩き回って、同じルームの人と話せる2Dタウン。ルーム名だけで入室できます。</p></div></div>
+    <div class="logo-line"><div class="logo-mark">✈️</div><div><h1>ニコリタウン</h1><p class="lead">歩き回って、同じルームの人と話せる2Dタウン。6ケタのルーム番号で入室できます。</p></div></div>
 
     <section id="loginScreen" class="screen">
       <h2>ログイン</h2>
@@ -38,7 +38,7 @@
       <div class="userBox"><div><div class="userName" id="currentUserName">-</div><div class="userSub" id="currentUserType">-</div></div><button id="logoutBtn" class="secondary">ログアウト</button></div>
       <h2>ルーム</h2>
       <div class="grid two">
-        <label>ルーム名<input id="roomName" maxlength="32" placeholder="例）park-001" autocomplete="off" /></label>
+        <label>ルーム番号<input id="roomCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="例）123456" autocomplete="one-time-code" /></label>
         <label>表示名<input id="playerName" maxlength="16" placeholder="例）こっぴー" autocomplete="off" /></label>
       </div>
       <div id="skinPicker" class="skin-picker" aria-label="スキン変更">
@@ -58,8 +58,8 @@
         <div class="skin-picker-title">最近入ったマップ</div>
         <div id="historyList" class="history-list"></div>
       </div>
-      <div class="row right"><button id="randomRoomBtn" class="secondary">ランダム名</button><button id="enterRoomBtn">ルームに入る</button></div>
-      <p class="notice">ルームパスワードは使いません。同じルーム名を入力した人が同じ部屋に入ります。</p>
+      <div class="row right"><button id="createRoomBtn" class="secondary">新しいルーム番号を発行</button><button id="enterRoomBtn">番号で入る</button></div>
+      <p class="notice">ルーム番号は6ケタの数字です。新規作成時は重複しない番号を自動発行します。</p>
       <div id="roomStatus" class="status"></div>
     </section>
   </main>
@@ -67,7 +67,7 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js';
     import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, updateProfile } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js';
-    import { getDatabase, ref, update, get, remove } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
+    import { getDatabase, ref, update, get, remove, runTransaction } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
 
     const firebaseConfig = {
       apiKey: 'AIzaSyCy3P-HQhfd8-zpPUJ5YANxwRMuTCjFFAQ',
@@ -84,6 +84,7 @@
     const db = getDatabase(app, firebaseConfig.databaseURL);
     const $ = id => document.getElementById(id);
     const LS_ROOM = 'nikoriTown.lastRoom';
+    const LS_ROOM_CODE = 'nikoriTown.lastRoomCode';
     const LS_NAME = 'nikoriTown.playerName';
     const LS_SKIN = 'nikoriTown.skin';
     const LS_MAP = 'nikoriTown.currentMap';
@@ -101,7 +102,7 @@
     ];
 
     $('guestName').value = localStorage.getItem(LS_NAME) || '';
-    $('roomName').value = localStorage.getItem(LS_ROOM) || '';
+    $('roomCode').value = safeRoomCode(localStorage.getItem(LS_ROOM_CODE) || localStorage.getItem(LS_ROOM) || '');
     $('playerName').value = localStorage.getItem(LS_NAME) || '';
 
     const provider = new GoogleAuthProvider();
@@ -110,6 +111,9 @@
     function setLoginStatus(text){ $('loginStatus').textContent = text || ''; }
     function setRoomStatus(text){ $('roomStatus').textContent = text || ''; }
     function safeRoom(raw){ return String(raw || '').trim().toLowerCase().replace(/[.#$/\[\]\/]/g,'-').replace(/[^\w\-ぁ-んァ-ヶ一-龠]/g,'-').replace(/-+/g,'-').slice(0,32); }
+    function safeRoomCode(raw){ return String(raw || '').replace(/\D/g, '').slice(0, 6); }
+    function isRoomCode(value){ return /^\d{6}$/.test(String(value || '')); }
+    function randomRoomCode(){ return String(Math.floor(100000 + Math.random() * 900000)); }
     function safeName(raw){ const name = String(raw || '').trim().slice(0,16); return name || 'ゲスト'; }
     function normalizeSkin(raw){ return raw === 'turuturu' ? 'turuturu' : 'nikorihito'; }
     function getSelectedSkin(){ return normalizeSkin(localStorage.getItem(LS_SKIN) || 'nikorihito'); }
@@ -166,6 +170,38 @@
       setSelectedMap(getSelectedMap());
     }
     function userName(user){ return safeName(user?.displayName || localStorage.getItem(LS_NAME) || 'ゲスト'); }
+    function roomTitle(code){ return `ルーム ${code}`; }
+    async function reserveRoomCode(uid){
+      for (let i = 0; i < 30; i++) {
+        const code = randomRoomCode();
+        const result = await runTransaction(ref(db, `roomCodes/${code}`), (current) => {
+          if (current) return;
+          return { roomId: code, roomCode: code, createdByUid: uid, createdAt: Date.now() };
+        });
+
+        if (result.committed) {
+          return code;
+        }
+      }
+
+      throw new Error('ROOM_CODE_EXHAUSTED');
+    }
+    async function findRoomByCode(code){
+      if (!isRoomCode(code)) return null;
+
+      const codeSnapshot = await get(ref(db, `roomCodes/${code}`)).catch(() => null);
+      if (codeSnapshot?.exists()) {
+        const value = codeSnapshot.val();
+        return { roomId: value.roomId || code, roomCode: value.roomCode || code };
+      }
+
+      const stateSnapshot = await get(ref(db, `rooms/${code}/roomState`)).catch(() => null);
+      if (stateSnapshot?.exists()) {
+        return { roomId: code, roomCode: code };
+      }
+
+      return null;
+    }
     function formatTime(value){
       const date = new Date(Number(value) || Date.now());
       return date.toLocaleString('ja-JP', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -255,7 +291,7 @@
         main.className = 'history-main';
         const title = document.createElement('div');
         title.className = 'history-title';
-        title.textContent = item.roomName || item.roomId;
+        title.textContent = item.roomName || roomTitle(item.roomCode || item.roomId);
         const sub = document.createElement('div');
         sub.className = 'history-sub';
         const floorText = item.floorName ? ` / ${item.floorName}` : '';
@@ -284,17 +320,21 @@
       if (!user) { setRoomStatus('先にログインしてください。'); return; }
 
       const name = safeName($('playerName').value || userName(user) || item.lastPlayerName);
+      const roomCode = safeRoomCode(item.roomCode || item.roomId);
+      if (!isRoomCode(roomCode)) { setRoomStatus('履歴のルーム番号が正しくありません。'); return; }
       const mapIndex = normalizeMap(item.mapId);
       const map = getMap(mapIndex);
       const floor = findFloor(map, item.floorId);
       const now = Date.now();
-      localStorage.setItem(LS_ROOM, item.roomId);
+      localStorage.setItem(LS_ROOM, roomCode);
+      localStorage.setItem(LS_ROOM_CODE, roomCode);
       localStorage.setItem(LS_NAME, name);
       localStorage.setItem(LS_MAP, map.id);
       await saveMapHistory(user, {
         ...item,
-        roomId: item.roomId,
-        roomName: item.roomName || item.roomId,
+        roomId: roomCode,
+        roomCode,
+        roomName: item.roomName || roomTitle(roomCode),
         mapId: map.id,
         mapName: map.name,
         floorId: floor?.id || '',
@@ -306,7 +346,7 @@
       });
 
       const u = new URL('./room.html', location.href);
-      u.searchParams.set('room', item.roomId);
+      u.searchParams.set('roomCode', roomCode);
       u.searchParams.set('name', name);
       u.searchParams.set('skin', getSelectedSkin());
       u.searchParams.set('map', map.id);
@@ -360,48 +400,100 @@
       }
     });
 
+    async function openRoom({ roomCode, user, name, skin, map, floor, isNewRoom }) {
+      const floorId = floor?.id || '';
+      const now = Date.now();
+
+      localStorage.setItem(LS_ROOM, roomCode);
+      localStorage.setItem(LS_ROOM_CODE, roomCode);
+      localStorage.setItem(LS_NAME, name);
+      localStorage.setItem(LS_SKIN, skin);
+      localStorage.setItem(LS_MAP, map.id);
+
+      await update(ref(db, `roomMeta/${roomCode}`), {
+        room: roomCode,
+        roomId: roomCode,
+        roomCode,
+        roomName: roomTitle(roomCode),
+        noAccountMode: true,
+        passwordEnabled: false,
+        authMode: user.isAnonymous ? 'guest' : 'google',
+        updatedAt: now,
+        lastJoinUid: user.uid
+      });
+
+      if (isNewRoom) {
+        await update(ref(db, `rooms/${roomCode}/roomState`), {
+          mapIndex: normalizeMap(map.id),
+          mapId: map.id,
+          floorId,
+          createdByUid: user.uid,
+          updatedAt: now
+        }).catch(console.warn);
+      }
+
+      await saveMapHistory(user, {
+        roomId: roomCode,
+        roomCode,
+        roomName: roomTitle(roomCode),
+        mapId: map.id,
+        mapName: map.name,
+        floorId,
+        floorName: floor?.name || '',
+        joinedAt: now,
+        updatedAt: now,
+        ownerUid: user.uid,
+        createdByUid: user.uid,
+        lastPlayerName: name
+      });
+
+      const u = new URL('./room.html', location.href);
+      u.searchParams.set('roomCode', roomCode);
+      u.searchParams.set('name', name);
+      u.searchParams.set('skin', skin);
+      u.searchParams.set('map', map.id);
+      if (floorId) u.searchParams.set('floor', floorId);
+      location.href = u.toString();
+    }
+
     async function enterRoom(){
       const user = auth.currentUser;
       if (!user) { setRoomStatus('先にGoogleログインまたはゲストログインしてください。'); return; }
-      const room = safeRoom($('roomName').value);
-      if (!room) { setRoomStatus('ルーム名を入力してください。'); $('roomName').focus(); return; }
+      const roomCode = safeRoomCode($('roomCode').value);
+      $('roomCode').value = roomCode;
+      if (!isRoomCode(roomCode)) { setRoomStatus('6ケタのルーム番号を入力してください。'); $('roomCode').focus(); return; }
       const name = safeName($('playerName').value || userName(user));
       const skin = getSelectedSkin();
-      const mapIndex = getSelectedMap();
-      let map = getMap(mapIndex);
-      let floor = getDefaultFloor(map);
-      let floorId = floor?.id || '';
-      const now = Date.now();
-      $('enterRoomBtn').disabled = true; setRoomStatus('ルームを準備しています...');
+      $('enterRoomBtn').disabled = true; setRoomStatus('ルームを探しています...');
       try {
         if (user.isAnonymous && user.displayName !== name) { try { await updateProfile(user, { displayName:name }); } catch {} }
-        const existingState = await get(ref(db, `rooms/${room}/roomState`)).then(snapshot => snapshot.val()).catch(() => null);
-        if (existingState?.mapId) {
-          map = getMap(normalizeMap(existingState.mapId));
-          floor = findFloor(map, existingState.floorId);
-          floorId = floor?.id || '';
-        }
-        localStorage.setItem(LS_ROOM, room); localStorage.setItem(LS_NAME, name); localStorage.setItem(LS_SKIN, skin); localStorage.setItem(LS_MAP, map.id);
-        await update(ref(db, `roomMeta/${room}`), { room, noAccountMode:true, passwordEnabled:false, authMode:user.isAnonymous ? 'guest' : 'google', updatedAt:Date.now(), lastJoinUid:user.uid });
-        await update(ref(db, `rooms/${room}/roomState`), { mapIndex: normalizeMap(map.id), mapId: map.id, floorId, updatedAt:now }).catch(console.warn);
-        await saveMapHistory(user, {
-          roomId: room,
-          roomName: room,
-          mapId: map.id,
-          mapName: map.name,
-          floorId,
-          floorName: floor?.name || '',
-          joinedAt: now,
-          updatedAt: now,
-          ownerUid: user.uid,
-          createdByUid: user.uid,
-          lastPlayerName: name
-        });
-        const u = new URL('./room.html', location.href);
-        u.searchParams.set('room', room); u.searchParams.set('name', name); u.searchParams.set('skin', skin); u.searchParams.set('map', map.id); if (floorId) u.searchParams.set('floor', floorId);
-        location.href = u.toString();
+        const found = await findRoomByCode(roomCode);
+        if (!found) { setRoomStatus('ルームが見つかりません。'); $('enterRoomBtn').disabled = false; return; }
+
+        const state = await get(ref(db, `rooms/${found.roomId}/roomState`)).then(snapshot => snapshot.val()).catch(() => null);
+        const map = getMap(normalizeMap(state?.mapId));
+        const floor = findFloor(map, state?.floorId);
+        await openRoom({ roomCode: found.roomId, user, name, skin, map, floor, isNewRoom: false });
       } catch (e) {
         console.error(e); setRoomStatus('入室準備に失敗しました。Firebaseの設定またはDBルールを確認してください。'); $('enterRoomBtn').disabled = false;
+      }
+    }
+
+    async function createRoom(){
+      const user = auth.currentUser;
+      if (!user) { setRoomStatus('先にGoogleログインまたはゲストログインしてください。'); return; }
+      const name = safeName($('playerName').value || userName(user));
+      const skin = getSelectedSkin();
+      const map = getMap(getSelectedMap());
+      const floor = getDefaultFloor(map);
+      $('createRoomBtn').disabled = true; $('enterRoomBtn').disabled = true; setRoomStatus('ルーム番号を発行しています...');
+      try {
+        if (user.isAnonymous && user.displayName !== name) { try { await updateProfile(user, { displayName:name }); } catch {} }
+        const roomCode = await reserveRoomCode(user.uid);
+        $('roomCode').value = roomCode;
+        await openRoom({ roomCode, user, name, skin, map, floor, isNewRoom: true });
+      } catch (e) {
+        console.error(e); setRoomStatus('ルーム番号の発行に失敗しました。もう一度試してください。'); $('createRoomBtn').disabled = false; $('enterRoomBtn').disabled = false;
       }
     }
 
@@ -409,10 +501,11 @@
     $('googleLoginBtn').onclick = loginGoogle;
     $('logoutBtn').onclick = logout;
     $('enterRoomBtn').onclick = enterRoom;
-    $('roomName').addEventListener('keydown', e => { if (e.key === 'Enter') enterRoom(); });
+    $('createRoomBtn').onclick = createRoom;
+    $('roomCode').addEventListener('input', e => { e.target.value = safeRoomCode(e.target.value); });
+    $('roomCode').addEventListener('keydown', e => { if (e.key === 'Enter') enterRoom(); });
     $('playerName').addEventListener('keydown', e => { if (e.key === 'Enter') enterRoom(); });
     $('guestName').addEventListener('keydown', e => { if (e.key === 'Enter') loginGuest(); });
-    $('randomRoomBtn').onclick = () => { $('roomName').value = 'room-' + Math.random().toString(36).slice(2,7); $('roomName').focus(); };
     initSkinPicker();
     initMapPicker();
   </script>
