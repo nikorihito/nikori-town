@@ -288,7 +288,10 @@
     function subscribeRooms(id){
       const roomsRef = ref(db, `serverRooms/${id}`);
       const callback = snap => {
-        state.rooms = snap.val() || {};
+        state.rooms = Object.fromEntries(Object.entries(snap.val() || {}).map(([roomId, room]) => [
+          roomId,
+          { id:roomId, ...room, type:['chat','map','voice'].includes(room?.type) ? room.type : 'chat' }
+        ]));
         renderRooms();
         if (!state.activeRoom) {
           const first = Object.values(state.rooms).sort((a,b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0))[0];
@@ -345,16 +348,24 @@
       const user = auth.currentUser;
       const server = state.activeServer;
       if (!server || !canOperate()) return;
+      if (!['chat','map','voice'].includes(type)) return setStatus('ルーム種別が正しくありません。');
       const defaults = { chat:'雑談', map:'みんなのマップ', voice:'通話ルーム' };
       const name = safeName(prompt('ルーム名', defaults[type] || 'ルーム'));
       if (!name) return;
       const roomRef = push(ref(db, `serverRooms/${server.id}`));
       const now = Date.now();
       const room = { id:roomRef.key, type, name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
-      state.rooms[room.id] = room;
-      renderRooms();
-      await writeStep('serverRooms create write', `serverRooms/${server.id}/${room.id}`, () => set(roomRef, room));
-      selectRoom(room.id);
+      setStatus('ルームを作成しています...');
+      try {
+        await writeStep('serverRooms create write', `serverRooms/${server.id}/${room.id}`, () => set(roomRef, room));
+        setStatus('ルームを作成しました。');
+        const saved = (await get(ref(db, `serverRooms/${server.id}/${room.id}`))).val();
+        if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
+        selectRoom(room.id);
+      } catch (error) {
+        console.error('create server room failed', { serverId:server.id, roomId:room.id, type, path:`serverRooms/${server.id}/${room.id}` }, error);
+        setStatus(describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
+      }
     }
     function selectRoom(id){
       const room = state.rooms?.[id];

@@ -549,7 +549,10 @@
     function subscribeServerRooms(serverId){
       const roomsRef = ref(db, `serverRooms/${serverId}`);
       const callback = snapshot => {
-        serverState.rooms = snapshot.val() || {};
+        serverState.rooms = Object.fromEntries(Object.entries(snapshot.val() || {}).map(([roomId, room]) => [
+          roomId,
+          { id: roomId, ...room, type: ['chat', 'map', 'voice'].includes(room?.type) ? room.type : 'chat' }
+        ]));
         renderServerRooms();
         if (!serverState.activeRoom) {
           const first = Object.values(serverState.rooms).sort((a, b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0))[0];
@@ -627,13 +630,24 @@
       const user = auth.currentUser;
       const server = serverState.activeServer;
       if (!isGoogleUser(user) || !server || !canOperate()) return;
+      if (!['chat', 'map', 'voice'].includes(type)) return setServerStatus('ルーム種別が正しくありません。');
       const defaults = { chat: '雑談', map: 'みんなのマップ', voice: '通話ルーム' };
       const name = safeName(prompt('ルーム名', defaults[type] || 'ルーム'));
       if (!name) return;
       const roomId = createServerRoomId();
       const now = Date.now();
-      await update(ref(db, `serverRooms/${server.id}/${roomId}`), { id: roomId, type, name, createdBy: user.uid, createdAt: now, order: now });
-      selectServerRoom(roomId);
+      const path = `serverRooms/${server.id}/${roomId}`;
+      setServerStatus('ルームを作成しています...');
+      try {
+        await update(ref(db, path), { id: roomId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now });
+        const saved = (await get(ref(db, path))).val();
+        if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
+        setServerStatus('ルームを作成しました。');
+        selectServerRoom(roomId);
+      } catch (error) {
+        console.error('create server room failed', { serverId: server.id, roomId, type, path }, error);
+        setServerStatus(describeServerError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
+      }
     }
     async function deleteActiveServerRoom(){
       const server = serverState.activeServer;
