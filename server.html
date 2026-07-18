@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+  <title>ニコリタウン - サーバー</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0f172a;--card:#111827;--panel:#0b1220;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;--a1:#22d3ee;--a2:#06b6d4;--danger:#ef4444}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100svh;padding:18px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;background:radial-gradient(circle at 20% 12%,rgba(34,211,238,.18),transparent 32%),var(--bg);color:var(--text)}
+    button,input,select{font:inherit}button{cursor:pointer;border:0;border-radius:13px;padding:11px 14px;background:linear-gradient(180deg,var(--a1),var(--a2));color:#06202a;font-weight:900}button.secondary{background:#1e293b;border:1px solid var(--border);color:var(--text)}button.danger{background:var(--danger);color:white}
+    input,select{width:100%;border:1px solid var(--border);border-radius:13px;background:#07101f;color:var(--text);padding:12px 13px}input:focus,select:focus{outline:none;border-color:var(--a1);box-shadow:0 0 0 3px rgba(34,211,238,.20)}
+    .shell{width:min(1100px,96vw);margin:0 auto}.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.title{font-size:24px;font-weight:900}.sub{color:var(--muted);font-size:13px;margin-top:3px}.panel{border:1px solid rgba(148,163,184,.22);border-radius:18px;background:rgba(17,24,39,.92);padding:16px}.gate{padding:18px;border:1px dashed rgba(148,163,184,.34);border-radius:16px;color:var(--muted);background:rgba(15,23,42,.45)}
+    .server-actions{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:16px}.action-card{border:1px solid rgba(148,163,184,.24);border-radius:16px;background:rgba(2,6,23,.25);padding:14px;display:grid;gap:12px}.action-card h2{font-size:16px;margin:0}.action-card button{justify-self:end;min-width:112px}.status{min-height:22px;color:#a5f3fc;font-size:13px;font-weight:700;margin:8px 0 0}
+    .server-list{display:grid;gap:10px;margin-top:10px}.server-card{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:16px;background:rgba(15,23,42,.62)}.server-icon{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:#0f172a;border:1px solid rgba(148,163,184,.24);font-size:24px}.server-name{font-weight:900}.server-host{font-size:12px;color:var(--muted);margin-top:3px}.empty{color:var(--muted);font-size:13px;line-height:1.7}
+    .server-app{min-height:560px;display:grid;grid-template-columns:245px 1fr 210px;border:1px solid rgba(148,163,184,.22);border-radius:18px;overflow:hidden;background:rgba(2,6,23,.22)}.server-app[hidden]{display:none}.sidebar{background:rgba(15,23,42,.82);border-right:1px solid rgba(148,163,184,.20);padding:12px}.server-head{display:flex;gap:9px;align-items:center;margin:12px 0}.room-group{margin:14px 0}.room-group-title{font-size:11px;color:var(--muted);font-weight:900;letter-spacing:.08em;margin-bottom:6px}.room-button{width:100%;display:block;text-align:left;margin:4px 0;padding:8px 9px;border-radius:9px;background:transparent;border:0;color:#cbd5e1}.room-button.active{background:rgba(34,211,238,.16);color:#e0f2fe}.room-create{width:100%;margin:5px 0;padding:8px 9px;font-size:12px;background:#1e293b;color:var(--text);border:1px solid var(--border)}
+    .main{padding:14px;min-width:0}.right{padding:12px;border-left:1px solid rgba(148,163,184,.20);background:rgba(15,23,42,.42)}.section-title{font-weight:900;margin:0 0 10px}.chat{height:340px;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:10px;background:rgba(2,6,23,.22);margin-bottom:10px}.msg{margin:0 0 9px;line-height:1.45}.msg-name{font-weight:900;color:#a5f3fc}.msg-meta{font-size:11px;color:var(--muted);margin-left:4px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.chat-form input{flex:1;min-width:180px}.settings{margin-top:12px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)}.member-row{display:grid;gap:6px;padding:7px 0;border-bottom:1px solid rgba(148,163,184,.12);font-size:12px}
+    @media(max-width:860px){body{padding:12px}.server-actions{grid-template-columns:1fr}.server-app{grid-template-columns:1fr}.sidebar,.right{border:0}.right{border-top:1px solid rgba(148,163,184,.20)}.server-card{grid-template-columns:auto 1fr}.server-card button{grid-column:1 / -1}.action-card button{justify-self:stretch}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div><div class="title">サーバー</div><div class="sub" id="userLabel">確認中...</div></div>
+      <div class="row"><button id="googleLoginBtn" class="secondary" type="button">Googleログイン</button><button id="homeBtn" class="secondary" type="button">ホームに戻る</button></div>
+    </div>
+
+    <section id="gate" class="gate" hidden>サーバー機能を使うにはGoogleログインが必要です。</section>
+
+    <section id="serverHome" class="panel" hidden>
+      <div class="server-actions">
+        <div class="action-card">
+          <h2>参加コードで参加</h2>
+          <label>15ケタ参加コード<input id="serverJoinCode" maxlength="15" inputmode="text" pattern="[A-Za-z0-9]{15}" placeholder="例）A1B2C3D4E5F6G7H" autocomplete="one-time-code" /></label>
+          <button id="serverJoinBtn" type="button">参加</button>
+        </div>
+        <div class="action-card">
+          <h2>新規サーバー作成</h2>
+          <label>新規サーバー名<input id="serverCreateName" maxlength="28" placeholder="例）ニコリヒトサーバー" autocomplete="off" /></label>
+          <button id="serverCreateBtn" class="secondary" type="button">サーバー作成</button>
+        </div>
+      </div>
+      <div id="serverStatus" class="status"></div>
+      <div class="section-title">サーバー一覧</div>
+      <div id="serverList" class="server-list"></div>
+    </section>
+
+    <section id="serverApp" class="server-app" hidden>
+      <aside class="sidebar">
+        <button id="serverCloseBtn" type="button" class="danger">閉じる</button>
+        <div class="server-head"><div id="activeServerIcon" class="server-icon">🌐</div><div><div id="activeServerName" class="server-name">-</div><div id="activeServerRole" class="server-host">-</div></div></div>
+        <div id="serverRooms"></div>
+        <div id="serverRoomCreateTools"></div>
+      </aside>
+      <section class="main">
+        <div class="server-name" id="activeRoomTitle">ルームを選択してください</div>
+        <div id="serverRoomContent" style="margin-top:12px"></div>
+      </section>
+      <aside class="right">
+        <div class="section-title">メンバー</div>
+        <div id="serverMembers"></div>
+        <div id="serverSettings" class="settings" hidden></div>
+      </aside>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js';
+    import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js';
+    import { getDatabase, ref, update, get, remove, set, push, onValue, off, query as dbQuery, orderByChild, equalTo } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
+
+    const firebaseConfig = {
+      apiKey: 'AIzaSyCy3P-HQhfd8-zpPUJ5YANxwRMuTCjFFAQ',
+      authDomain: 'nikori-town.firebaseapp.com',
+      databaseURL: 'https://nikori-town-default-rtdb.asia-southeast1.firebasedatabase.app',
+      projectId: 'nikori-town',
+      storageBucket: 'nikori-town.appspot.com',
+      messagingSenderId: '836836010871',
+      appId: '1:836836010871:web:74ae40cb16ee6d50368f72'
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const db = getDatabase(app, firebaseConfig.databaseURL);
+    const $ = id => document.getElementById(id);
+    const state = { listUnsub:null, roomsUnsub:null, membersUnsub:null, messagesUnsub:null, voiceUnsub:null, activeServer:null, activeMember:null, activeRoom:null, rooms:{}, members:{} };
+
+    const safeName = value => String(value || '').trim().slice(0, 16) || 'ゲスト';
+    const userName = user => safeName(user?.displayName || 'Googleユーザー');
+    const isGoogleUser = user => Boolean(user && !user.isAnonymous);
+    const setStatus = text => $('serverStatus').textContent = text || '';
+    const safeCode = value => String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 15);
+    const isCode = value => /^[A-Z0-9]{15}$/.test(String(value || ''));
+    const todayKey = () => {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Tokyo', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+      const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    };
+    const describeError = (error, fallback) => {
+      const code = error?.code || '';
+      const message = error?.message || String(error || '');
+      if (code.includes('permission') || /permission|PERMISSION_DENIED/i.test(message)) return `${fallback} Firebase Realtime Database の権限が拒否されています。(${code || message})`;
+      return code || message ? `${fallback} ${code ? `${code}: ` : ''}${message}` : fallback;
+    };
+    const randomCode = () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let out = '';
+      for (let i = 0; i < 15; i++) out += chars[Math.floor(Math.random() * chars.length)];
+      return out;
+    };
+    const serverId = () => `server_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+    const roleLabel = role => role === 'operator' ? 'operator' : role === 'guest' ? 'guest' : 'member';
+    const canOperate = () => state.activeMember?.role === 'operator';
+    const canDeleteServer = () => Boolean(auth.currentUser?.uid && state.activeServer?.hostUid === auth.currentUser.uid);
+    const memberName = member => `${safeName(member?.name)}${state.activeServer?.hostUid === member?.uid ? ' 👑' : ''}${member?.role === 'operator' && state.activeServer?.hostUid !== member?.uid ? ' OP' : ''}`;
+
+    function clearServerSubscriptions(){
+      for (const key of ['roomsUnsub','membersUnsub','messagesUnsub','voiceUnsub']) if (state[key]) { state[key](); state[key] = null; }
+    }
+    function closeActiveServer(){
+      clearServerSubscriptions();
+      state.activeServer = state.activeMember = state.activeRoom = null;
+      state.rooms = {}; state.members = {};
+      $('serverApp').hidden = true;
+      $('serverHome').hidden = !isGoogleUser(auth.currentUser);
+    }
+    async function findServerByJoinCode(code){
+      const codeSnap = await get(ref(db, `serverCodes/${code}`)).catch(error => {
+        console.error('serverCodes lookup failed', { path:`serverCodes/${code}`, code }, error);
+        return null;
+      });
+      const codeData = codeSnap?.val();
+      if (codeData?.serverId && codeData.joinCodeDate === todayKey()) {
+        const server = (await get(ref(db, `servers/${codeData.serverId}`)).catch(error => {
+          console.error('servers lookup by serverCodes failed', { path:`servers/${codeData.serverId}`, code }, error);
+          throw error;
+        }))?.val();
+        if (server?.joinCode === code && server?.joinCodeDate === todayKey()) return server;
+      }
+      const snap = await get(dbQuery(ref(db, 'servers'), orderByChild('joinCode'), equalTo(code)));
+      return Object.values(snap.val() || {}).find(server => server?.joinCode === code && server?.joinCodeDate === todayKey()) || null;
+    }
+    async function reserveJoinCode(id, uid, date = todayKey()){
+      for (let i = 0; i < 50; i++) {
+        const code = randomCode();
+        const existing = await findServerByJoinCode(code);
+        if (!existing || existing.id === id) return code;
+      }
+      throw new Error('SERVER_CODE_EXHAUSTED');
+    }
+    async function ensureDailyCode(server, uid){
+      const date = todayKey();
+      if (server?.joinCode && server.joinCodeDate === date) return server;
+      const joinCode = await reserveJoinCode(server.id, uid, date);
+      const patch = { joinCode, joinCodeDate:date, updatedAt:Date.now() };
+      await update(ref(db, `servers/${server.id}`), patch);
+      await update(ref(db, `serverCodes/${joinCode}`), { serverId:server.id, joinCode, joinCodeDate:date, updatedAt:Date.now() }).catch(error => console.error('serverCodes daily write failed', error));
+      return Object.assign(server, patch);
+    }
+    async function writeStep(label, path, action){
+      try {
+        const result = await action();
+        console.info(`${label} succeeded`, { path });
+        return result;
+      } catch (error) {
+        console.error(`${label} failed`, { path, code:error?.code, message:error?.message }, error);
+        throw error;
+      }
+    }
+    async function createServer(){
+      const user = auth.currentUser;
+      if (!isGoogleUser(user)) return setStatus('サーバー機能を使うにはGoogleログインが必要です。');
+      $('serverCreateBtn').disabled = true;
+      setStatus('サーバーを作成しています...');
+      const id = serverId();
+      const date = todayKey();
+      const now = Date.now();
+      let joinCode = '';
+      let serverSaved = false;
+      const warnings = [];
+      try {
+        joinCode = await reserveJoinCode(id, user.uid, date);
+        const server = { id, name:String($('serverCreateName').value || `${userName(user)} サーバー`).trim().slice(0,28), icon:'🌐', description:'', hostUid:user.uid, hostName:userName(user), joinCode, joinCodeDate:date, createdAt:now, updatedAt:now };
+        await writeStep('servers write', `servers/${id}`, () => update(ref(db, `servers/${id}`), server));
+        serverSaved = true;
+        try { await writeStep('serverMembers write', `serverMembers/${id}/${user.uid}`, () => update(ref(db, `serverMembers/${id}/${user.uid}`), { uid:user.uid, name:userName(user), role:'operator', joinedAt:now, updatedAt:now })); } catch(error){ warnings.push(`serverMembers: ${error?.code || error?.message || error}`); }
+        try { await writeStep('userServers write', `userServers/${user.uid}/${id}`, () => update(ref(db, `userServers/${user.uid}/${id}`), { serverId:id, joinedAt:now, lastOpenedAt:now })); } catch(error){ warnings.push(`userServers: ${error?.code || error?.message || error}`); }
+        try { await writeStep('serverCodes write', `serverCodes/${joinCode}`, () => update(ref(db, `serverCodes/${joinCode}`), { serverId:id, joinCode, joinCodeDate:date, createdByUid:user.uid, updatedAt:now })); } catch(error){ warnings.push(`serverCodes: ${error?.code || error?.message || error}`); }
+        const roomKey = push(ref(db, `serverRooms/${id}`)).key;
+        try { await writeStep('serverRooms write', `serverRooms/${id}/${roomKey}`, () => update(ref(db, `serverRooms/${id}/${roomKey}`), { id:roomKey, type:'chat', name:'雑談', createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now })); } catch(error){ warnings.push(`serverRooms: ${error?.code || error?.message || error}`); }
+        $('serverJoinCode').value = joinCode;
+        renderServerList([server]);
+        subscribeUserServers(user);
+        setStatus(`サーバーを作成しました。今日の参加コード: ${joinCode}${warnings.length ? ` / 一部保存に失敗: ${warnings.join(' / ')}` : ''}`);
+      } catch (error) {
+        console.error('createServer failed', { uid:user?.uid, displayName:user?.displayName, serverId:id, joinCode, serverSaved, code:error?.code, message:error?.message }, error);
+        setStatus(serverSaved ? `サーバー本体は作成済みです。追加保存に失敗しました: ${error?.code || error?.message || error}` : describeError(error, 'サーバー作成に失敗しました。'));
+      } finally {
+        $('serverCreateBtn').disabled = false;
+      }
+    }
+    async function joinServer(){
+      const user = auth.currentUser;
+      const code = safeCode($('serverJoinCode').value);
+      $('serverJoinCode').value = code;
+      if (!isGoogleUser(user)) return setStatus('サーバー機能を使うにはGoogleログインが必要です。');
+      if (!isCode(code)) return setStatus('15ケタの参加コードを入力してください。');
+      $('serverJoinBtn').disabled = true;
+      try {
+        const server = await findServerByJoinCode(code);
+        if (!server) return setStatus('サーバーが見つかりません。参加コードが古い可能性があります。');
+        const now = Date.now();
+        await writeStep('serverMembers join write', `serverMembers/${server.id}/${user.uid}`, () => update(ref(db, `serverMembers/${server.id}/${user.uid}`), { uid:user.uid, name:userName(user), role:server.hostUid === user.uid ? 'operator' : 'member', joinedAt:now, updatedAt:now }));
+        await writeStep('userServers join write', `userServers/${user.uid}/${server.id}`, () => update(ref(db, `userServers/${user.uid}/${server.id}`), { serverId:server.id, joinedAt:now, lastOpenedAt:now }));
+        subscribeUserServers(user);
+        setStatus('サーバーに参加しました。');
+      } catch(error) {
+        console.error('joinServer failed', { uid:user?.uid, code }, error);
+        setStatus(describeError(error, 'サーバー参加に失敗しました。'));
+      } finally {
+        $('serverJoinBtn').disabled = false;
+      }
+    }
+    function subscribeUserServers(user){
+      if (state.listUnsub) state.listUnsub();
+      const listRef = ref(db, `userServers/${user.uid}`);
+      const callback = async snap => {
+        const rows = Object.values(snap.val() || {}).filter(item => item?.serverId);
+        const servers = [];
+        for (const item of rows) {
+          const server = (await get(ref(db, `servers/${item.serverId}`)).catch(() => null))?.val();
+          if (server) servers.push({ ...server, id:server.id || item.serverId, lastOpenedAt:item.lastOpenedAt || item.joinedAt || 0 });
+        }
+        servers.sort((a,b) => Number(b.lastOpenedAt || b.updatedAt || 0) - Number(a.lastOpenedAt || a.updatedAt || 0));
+        renderServerList(servers);
+      };
+      onValue(listRef, callback);
+      state.listUnsub = () => off(listRef, 'value', callback);
+    }
+    function renderServerList(servers){
+      const list = $('serverList');
+      list.innerHTML = '';
+      if (!servers.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = '参加済みサーバーはまだありません。';
+        list.appendChild(empty);
+        return;
+      }
+      for (const server of servers) {
+        const row = document.createElement('div');
+        row.className = 'server-card';
+        row.innerHTML = `<div class="server-icon">${server.icon || '🌐'}</div><div><div class="server-name">${server.name || 'サーバー'}</div><div class="server-host">host: ${safeName(server.hostName || 'unknown')}</div></div>`;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = '開く';
+        btn.onclick = () => openServer(server.id || server.serverId);
+        row.appendChild(btn);
+        list.appendChild(row);
+      }
+    }
+    async function openServer(id){
+      const user = auth.currentUser;
+      let server = (await get(ref(db, `servers/${id}`)).catch(() => null))?.val();
+      const member = (await get(ref(db, `serverMembers/${id}/${user.uid}`)).catch(() => null))?.val();
+      if (!server) {
+        await remove(ref(db, `userServers/${user.uid}/${id}`)).catch(console.warn);
+        return setStatus('このサーバーは削除されました。');
+      }
+      if (!member) return setStatus('サーバーに参加していません。');
+      if (member.role === 'operator') server = await ensureDailyCode({ ...server, id:server.id || id }, user.uid).catch(error => { console.error('ensureDailyCode failed', error); return server; });
+      closeActiveServer();
+      state.activeServer = { ...server, id:server.id || id };
+      state.activeMember = member;
+      $('serverHome').hidden = true;
+      $('serverApp').hidden = false;
+      $('activeServerIcon').textContent = server.icon || '🌐';
+      $('activeServerName').textContent = server.name || 'サーバー';
+      $('activeServerRole').textContent = `${roleLabel(member.role)}${server.hostUid === user.uid ? ' / host 👑' : ''}`;
+      await update(ref(db, `userServers/${user.uid}/${id}`), { lastOpenedAt:Date.now() }).catch(console.warn);
+      subscribeMembers(id);
+      subscribeRooms(id);
+      renderCreateTools();
+      renderSettings();
+    }
+    function subscribeRooms(id){
+      const roomsRef = ref(db, `serverRooms/${id}`);
+      const callback = snap => {
+        state.rooms = snap.val() || {};
+        renderRooms();
+        if (!state.activeRoom) {
+          const first = Object.values(state.rooms).sort((a,b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0))[0];
+          if (first) selectRoom(first.id);
+        }
+      };
+      onValue(roomsRef, callback);
+      state.roomsUnsub = () => off(roomsRef, 'value', callback);
+    }
+    function subscribeMembers(id){
+      const membersRef = ref(db, `serverMembers/${id}`);
+      const callback = snap => {
+        state.members = snap.val() || {};
+        const me = state.members[auth.currentUser?.uid];
+        if (me) state.activeMember = me;
+        renderMembers(); renderCreateTools(); renderSettings();
+      };
+      onValue(membersRef, callback);
+      state.membersUnsub = () => off(membersRef, 'value', callback);
+    }
+    function renderRooms(){
+      const root = $('serverRooms');
+      root.innerHTML = '';
+      const groups = [['chat','テキスト','#'],['map','マップ','🌍'],['voice','ボイス','🔊']];
+      const rooms = Object.values(state.rooms || {}).filter(room => room && room.id && room.type).sort((a,b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0));
+      for (const [type,label,icon] of groups) {
+        const group = document.createElement('div');
+        group.className = 'room-group';
+        const title = document.createElement('div');
+        title.className = 'room-group-title';
+        title.textContent = label;
+        group.appendChild(title);
+        rooms.filter(room => room.type === type).forEach(room => {
+          const btn = document.createElement('button');
+          btn.type = 'button'; btn.className = 'room-button'; btn.classList.toggle('active', state.activeRoom?.id === room.id);
+          btn.textContent = `${icon} ${room.name || 'ルーム'}`;
+          btn.onclick = () => selectRoom(room.id);
+          group.appendChild(btn);
+        });
+        root.appendChild(group);
+      }
+    }
+    function renderCreateTools(){
+      const root = $('serverRoomCreateTools');
+      root.innerHTML = '';
+      if (!canOperate()) return;
+      for (const [type,label] of [['chat','+ チャットルーム作成'],['map','+ マップルーム作成'],['voice','+ ボイスルーム作成']]) {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'room-create'; btn.textContent = label; btn.onclick = () => createRoom(type);
+        root.appendChild(btn);
+      }
+    }
+    async function createRoom(type){
+      const user = auth.currentUser;
+      const server = state.activeServer;
+      if (!server || !canOperate()) return;
+      const defaults = { chat:'雑談', map:'みんなのマップ', voice:'通話ルーム' };
+      const name = safeName(prompt('ルーム名', defaults[type] || 'ルーム'));
+      if (!name) return;
+      const roomRef = push(ref(db, `serverRooms/${server.id}`));
+      const now = Date.now();
+      const room = { id:roomRef.key, type, name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
+      state.rooms[room.id] = room;
+      renderRooms();
+      await writeStep('serverRooms create write', `serverRooms/${server.id}/${room.id}`, () => set(roomRef, room));
+      selectRoom(room.id);
+    }
+    function selectRoom(id){
+      const room = state.rooms?.[id];
+      if (!room) return;
+      state.activeRoom = room;
+      renderRooms();
+      if (state.messagesUnsub) { state.messagesUnsub(); state.messagesUnsub = null; }
+      if (state.voiceUnsub) { state.voiceUnsub(); state.voiceUnsub = null; }
+      $('activeRoomTitle').textContent = room.name || 'ルーム';
+      if (room.type === 'chat') renderChat(room);
+      if (room.type === 'voice') renderVoice(room);
+      if (room.type === 'map') $('serverRoomContent').innerHTML = '<div class="gate">サーバー内マップルームです。serverMapRooms/{serverId}/{roomId} 用に分離した構造で、既存マップ統合は次段階で接続できます。</div>';
+    }
+    function renderChat(room){
+      $('serverRoomContent').innerHTML = '<div id="chatLog" class="chat"></div><form id="chatForm" class="row chat-form"><input id="chatInput" maxlength="240" placeholder="メッセージを入力" autocomplete="off" /><button type="submit">送信</button></form>';
+      const messagesRef = ref(db, `serverMessages/${state.activeServer.id}/${room.id}`);
+      const callback = snap => {
+        const log = $('chatLog'); if (!log) return;
+        log.innerHTML = '';
+        const messages = Object.entries(snap.val() || {}).map(([id,value]) => ({ id, ...value })).sort((a,b) => Number(a.createdAt || 0) - Number(b.createdAt || 0)).slice(-80);
+        for (const msg of messages) {
+          const member = state.members[msg.uid] || { uid:msg.uid, name:msg.name, role:msg.role };
+          const row = document.createElement('div'); row.className = 'msg';
+          row.innerHTML = `<span class="msg-name">${memberName(member)}</span><span class="msg-meta">${new Date(Number(msg.createdAt)||Date.now()).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}</span><div></div>`;
+          row.lastChild.textContent = String(msg.text || '');
+          log.appendChild(row);
+        }
+        log.scrollTop = log.scrollHeight;
+      };
+      onValue(messagesRef, callback);
+      state.messagesUnsub = () => off(messagesRef, 'value', callback);
+      $('chatForm').onsubmit = async event => {
+        event.preventDefault();
+        const input = $('chatInput'); const text = input.value.trim().slice(0,240);
+        if (!text) return;
+        input.value = '';
+        await set(push(messagesRef), { uid:auth.currentUser.uid, name:userName(auth.currentUser), role:state.activeMember?.role || 'member', text, createdAt:Date.now() });
+      };
+    }
+    function renderVoice(room){
+      $('serverRoomContent').innerHTML = '<div class="gate">ボイスルームは入退室状態とマイク/カメラ/画面共有の同期UIです。</div><div class="row" style="margin-top:10px"><button id="voiceJoinBtn" type="button">入室</button><button id="voiceMicBtn" class="secondary" type="button">マイク切替</button><button id="voiceCameraBtn" class="secondary" type="button">カメラ切替</button><button id="voiceScreenBtn" class="secondary" type="button">画面共有切替</button><button id="voiceLeaveBtn" class="secondary" type="button">退出</button></div><div id="voiceMembers" class="server-list"></div>';
+      const voicePath = `serverVoiceState/${state.activeServer.id}/${room.id}`;
+      const updateVoice = async patch => update(ref(db, `${voicePath}/${auth.currentUser.uid}`), { uid:auth.currentUser.uid, name:userName(auth.currentUser), joinedAt:Date.now(), ...patch });
+      $('voiceJoinBtn').onclick = () => updateVoice({ micEnabled:false, cameraEnabled:false, screenSharing:false });
+      $('voiceMicBtn').onclick = () => updateVoice({ micEnabled:true });
+      $('voiceCameraBtn').onclick = () => updateVoice({ cameraEnabled:true });
+      $('voiceScreenBtn').onclick = () => updateVoice({ screenSharing:true });
+      $('voiceLeaveBtn').onclick = () => remove(ref(db, `${voicePath}/${auth.currentUser.uid}`));
+      const voiceRef = ref(db, voicePath);
+      const callback = snap => {
+        const root = $('voiceMembers'); if (!root) return;
+        root.innerHTML = '';
+        for (const item of Object.values(snap.val() || {})) {
+          const row = document.createElement('div'); row.className = 'server-card';
+          row.innerHTML = `<div class="server-icon">🔊</div><div><div class="server-name">${memberName(state.members[item.uid] || item)}</div><div class="server-host">mic:${item.micEnabled?'on':'off'} / cam:${item.cameraEnabled?'on':'off'} / screen:${item.screenSharing?'on':'off'}</div></div>`;
+          root.appendChild(row);
+        }
+      };
+      onValue(voiceRef, callback);
+      state.voiceUnsub = () => off(voiceRef, 'value', callback);
+    }
+    function renderMembers(){
+      const root = $('serverMembers'); root.innerHTML = '';
+      for (const member of Object.values(state.members || {})) {
+        const row = document.createElement('div'); row.className = 'member-row'; row.textContent = memberName(member); root.appendChild(row);
+      }
+    }
+    function renderSettings(){
+      const root = $('serverSettings'); root.hidden = !canOperate(); root.innerHTML = '';
+      if (!canOperate() || !state.activeServer) return;
+      const server = state.activeServer;
+      root.innerHTML = '<div class="section-title">設定</div><label>サーバー名<input id="settingName" maxlength="28" /></label><label style="margin-top:8px">アイコン<input id="settingIcon" maxlength="80" /></label><label style="margin-top:8px">説明<input id="settingDescription" maxlength="120" /></label><div class="row" style="margin-top:8px"><button id="settingSaveBtn" type="button">保存</button><button id="reissueBtn" class="secondary" type="button">参加コード再発行</button></div><div class="server-host" id="joinCodeDisplay"></div><div id="roleTools" style="margin-top:10px"></div><div id="deleteServerTools" class="settings" hidden></div>';
+      $('settingName').value = server.name || ''; $('settingIcon').value = server.icon || '🌐'; $('settingDescription').value = server.description || '';
+      $('joinCodeDisplay').textContent = `参加コード: ${server.joinCode || '-'} / 有効日: ${server.joinCodeDate || '-'}`;
+      $('settingSaveBtn').onclick = async () => {
+        const patch = { name:String($('settingName').value || 'サーバー').trim().slice(0,28), icon:String($('settingIcon').value || '🌐').trim().slice(0,80), description:String($('settingDescription').value || '').trim().slice(0,120), updatedAt:Date.now() };
+        await update(ref(db, `servers/${server.id}`), patch); Object.assign(state.activeServer, patch); $('activeServerName').textContent = patch.name; $('activeServerIcon').textContent = patch.icon;
+      };
+      $('reissueBtn').onclick = async () => { await ensureDailyCode({ ...server, joinCodeDate:'' }, auth.currentUser.uid); Object.assign(state.activeServer, (await get(ref(db, `servers/${server.id}`))).val() || {}); renderSettings(); };
+      renderRoleTools();
+      renderDeleteServerTools();
+    }
+    function renderRoleTools(){
+      const root = $('roleTools'); if (!root) return; root.innerHTML = '<div class="section-title">権限管理</div>';
+      for (const member of Object.values(state.members || {})) {
+        const row = document.createElement('div'); row.className = 'member-row';
+        const label = document.createElement('div'); label.textContent = memberName(member);
+        const select = document.createElement('select'); select.disabled = member.uid === state.activeServer.hostUid;
+        for (const role of ['operator','member','guest']) { const option = document.createElement('option'); option.value = role; option.textContent = role; option.selected = roleLabel(member.role) === role; select.appendChild(option); }
+        select.onchange = () => update(ref(db, `serverMembers/${state.activeServer.id}/${member.uid}`), { role:select.value, updatedAt:Date.now() });
+        row.append(label, select); root.appendChild(row);
+      }
+    }
+    function renderDeleteServerTools(){
+      const root = $('deleteServerTools');
+      if (!root) return;
+      root.hidden = !canDeleteServer();
+      root.innerHTML = '';
+      if (!canDeleteServer()) return;
+      root.innerHTML = '<div class="section-title">危険な操作</div><div class="empty">サーバー本体と関連データを完全に削除します。この操作は元に戻せません。</div><button id="deleteServerBtn" class="danger" type="button" style="margin-top:8px">サーバーを削除</button>';
+      $('deleteServerBtn').onclick = deleteActiveServer;
+    }
+    async function deleteActiveServer(){
+      const user = auth.currentUser;
+      const server = state.activeServer;
+      if (!user || !server) return;
+      if (server.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
+      const message = `このサーバー「${server.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
+      if (!confirm(message)) return;
+      const typed = prompt('削除するにはサーバー名を入力してください', '');
+      if (typed !== (server.name || 'サーバー')) return setStatus('サーバー名が一致しないため、削除を中止しました。');
+      $('deleteServerBtn').disabled = true;
+      setStatus('サーバーを削除しています...');
+      try {
+        const latest = (await get(ref(db, `servers/${server.id}`))).val();
+        if (!latest) {
+          closeActiveServer();
+          subscribeUserServers(user);
+          return setStatus('このサーバーは削除されました。');
+        }
+        if (latest.hostUid !== user.uid) throw new Error('ONLY_HOST_CAN_DELETE_SERVER');
+        const [membersSnap, codeSnap] = await Promise.all([
+          get(ref(db, `serverMembers/${server.id}`)).catch(error => { console.error('serverMembers read before delete failed', error); return null; }),
+          get(dbQuery(ref(db, 'serverCodes'), orderByChild('serverId'), equalTo(server.id))).catch(error => { console.error('serverCodes read before delete failed', error); return null; })
+        ]);
+        const updates = {
+          [`servers/${server.id}`]: null,
+          [`serverMembers/${server.id}`]: null,
+          [`serverRooms/${server.id}`]: null,
+          [`serverMessages/${server.id}`]: null,
+          [`serverVoiceState/${server.id}`]: null,
+          [`serverMapRooms/${server.id}`]: null
+        };
+        for (const uid of Object.keys(membersSnap?.val() || {})) updates[`userServers/${uid}/${server.id}`] = null;
+        if (latest.joinCode) updates[`serverCodes/${latest.joinCode}`] = null;
+        for (const code of Object.keys(codeSnap?.val() || {})) updates[`serverCodes/${code}`] = null;
+        await writeStep('server delete update', 'server delete multi-path update', () => update(ref(db), updates));
+        closeActiveServer();
+        subscribeUserServers(user);
+        setStatus('サーバーを削除しました。');
+      } catch (error) {
+        console.error('deleteActiveServer failed', { serverId:server.id, uid:user.uid, code:error?.code, message:error?.message }, error);
+        setStatus(describeError(error, 'サーバー削除に失敗しました。'));
+      } finally {
+        const btn = $('deleteServerBtn');
+        if (btn) btn.disabled = false;
+      }
+    }
+    function showForUser(user){
+      $('userLabel').textContent = user ? `${userName(user)} / ${user.isAnonymous ? 'ゲスト' : 'Googleログイン'}` : '未ログイン';
+      $('googleLoginBtn').hidden = Boolean(user && !user.isAnonymous);
+      const allowed = isGoogleUser(user);
+      $('gate').hidden = allowed;
+      $('serverHome').hidden = !allowed;
+      if (!allowed) { closeActiveServer(); renderServerList([]); return; }
+      subscribeUserServers(user);
+    }
+
+    $('homeBtn').onclick = () => location.href = './index.html';
+    $('googleLoginBtn').onclick = async () => signInWithPopup(auth, provider).catch(error => setStatus(describeError(error, 'Googleログインに失敗しました。')));
+    $('serverJoinBtn').onclick = joinServer;
+    $('serverCreateBtn').onclick = createServer;
+    $('serverCloseBtn').onclick = closeActiveServer;
+    $('serverJoinCode').addEventListener('input', event => event.target.value = safeCode(event.target.value));
+    $('serverJoinCode').addEventListener('keydown', event => { if (event.key === 'Enter') joinServer(); });
+    onAuthStateChanged(auth, showForUser);
+  </script>
+</body>
+</html>

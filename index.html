@@ -37,7 +37,7 @@
     </section>
 
     <section id="roomScreen" class="screen" hidden>
-      <div class="userBox"><div><div class="userName" id="currentUserName">-</div><div class="userSub" id="currentUserType">-</div></div><button id="logoutBtn" class="secondary">ログアウト</button></div>
+      <div class="userBox"><div><div class="userName" id="currentUserName">-</div><div class="userSub" id="currentUserType">-</div></div><div class="row"><button id="openServerPageBtn" class="secondary" type="button">サーバーを開く</button><button id="logoutBtn" class="secondary">ログアウト</button></div></div>
       <h2>ルーム</h2>
       <div class="grid two">
         <label>ルーム番号<input id="roomCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="例）123456" autocomplete="one-time-code" /></label>
@@ -46,7 +46,6 @@
       <div class="home-tabs" role="tablist">
         <button type="button" class="home-tab active" data-home-tab="map">マップ</button>
         <button type="button" class="home-tab" data-home-tab="history">過去のマップ</button>
-        <button type="button" class="home-tab" data-home-tab="server">サーバー</button>
       </div>
       <div id="skinPicker" class="skin-picker" aria-label="スキン変更">
         <div class="skin-picker-title">スキン変更</div>
@@ -1135,6 +1134,7 @@
     $('logoutBtn').onclick = logout;
     $('enterRoomBtn').onclick = enterRoom;
     $('createRoomBtn').onclick = createRoom;
+    $('openServerPageBtn').onclick = () => { location.href = './server.html'; };
     document.querySelectorAll('[data-home-tab]').forEach(btn => btn.onclick = () => setHomeTab(btn.dataset.homeTab));
     $('serverJoinBtn').onclick = joinServerByCode;
     $('serverCreateBtn').onclick = createServer;

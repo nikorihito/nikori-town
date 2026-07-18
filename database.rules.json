@@ -1,19 +1,49 @@
 {
   "rules": {
     ".read": "auth != null",
-    ".write": "auth != null",
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "roomCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "roomMeta": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "userMapHistory": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$roomId": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
+    "_serverRoomIds": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
     "servers": {
       ".indexOn": ["joinCode"],
       "$serverId": {
         ".read": "auth != null",
-        ".write": "auth != null"
+        ".write": "auth != null && ((!data.exists() && newData.child('hostUid').val() === auth.uid) || (data.exists() && (newData.exists() || data.child('hostUid').val() === auth.uid)))"
       }
     },
     "serverMembers": {
       "$serverId": {
         ".read": "auth != null",
+        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid"
+          ".write": "auth != null && (auth.uid === $uid || root.child('servers').child($serverId).child('hostUid').val() === auth.uid || root.child('serverMembers').child($serverId).child(auth.uid).child('role').val() === 'operator')"
         }
       }
     },
@@ -21,14 +51,52 @@
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         "$serverId": {
-          ".write": "auth != null && auth.uid === $uid"
+          ".write": "auth != null && (auth.uid === $uid || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)"
         }
       }
     },
     "serverCodes": {
+      ".indexOn": ["serverId"],
       ".read": "auth != null",
       "$code": {
-        ".write": "auth != null"
+        ".write": "auth != null && (newData.exists() || root.child('servers').child(data.child('serverId').val()).child('hostUid').val() === auth.uid)"
+      }
+    },
+    "serverRooms": {
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)",
+        "$roomId": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "serverMessages": {
+      "$serverId": {
+        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)",
+        "$roomId": {
+          ".read": "auth != null",
+          "$messageId": {
+            ".write": "auth != null"
+          }
+        }
+      }
+    },
+    "serverVoiceState": {
+      "$serverId": {
+        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)",
+        "$roomId": {
+          ".read": "auth != null",
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        }
+      }
+    },
+    "serverMapRooms": {
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)"
       }
     }
   }
