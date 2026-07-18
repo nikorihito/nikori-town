@@ -1,0 +1,35 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "servers": {
+      ".indexOn": ["joinCode"],
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "serverMembers": {
+      "$serverId": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
+    "userServers": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$serverId": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
+    },
+    "serverCodes": {
+      ".read": "auth != null",
+      "$code": {
+        ".write": "auth != null"
+      }
+    }
+  }
+}

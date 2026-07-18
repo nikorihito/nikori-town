@@ -303,6 +303,19 @@
       }
     }
     async function findServerByJoinCode(code){
+      const codeSnapshot = await get(ref(db, `serverCodes/${code}`)).catch(error => {
+        console.error('serverCodes lookup failed', { path: `serverCodes/${code}`, code }, error);
+        return null;
+      });
+      const codeData = codeSnapshot?.val();
+      if (codeData?.serverId && codeData.joinCodeDate === todayKey()) {
+        const server = (await get(ref(db, `servers/${codeData.serverId}`)).catch(error => {
+          console.error('servers lookup by serverCodes failed', { path: `servers/${codeData.serverId}`, code }, error);
+          throw error;
+        }))?.val();
+        if (server?.joinCode === code && server?.joinCodeDate === todayKey()) return server;
+      }
+
       const snapshot = await get(dbQuery(ref(db, 'servers'), orderByChild('joinCode'), equalTo(code))).catch(error => {
         console.error('findServerByJoinCode failed', { code }, error);
         throw error;
@@ -325,6 +338,9 @@
       const joinCode = await reserveServerJoinCode(server.id, uid, date);
       const patch = { joinCode, joinCodeDate: date, updatedAt: Date.now() };
       await update(ref(db, `servers/${server.id}`), patch);
+      await update(ref(db, `serverCodes/${joinCode}`), { serverId: server.id, joinCode, joinCodeDate: date, updatedAt: Date.now() }).catch(error => {
+        console.error('serverCodes daily write failed', { path: `serverCodes/${joinCode}`, serverId: server.id, joinCode, joinCodeDate: date }, error);
+      });
       Object.assign(server, patch);
       return server;
     }
@@ -342,6 +358,16 @@
         setServerStatus(describeFirebaseError(error, '参加コードの再発行に失敗しました。'));
       }
     }
+    async function runServerWriteStep(label, path, action){
+      try {
+        const result = await action();
+        console.info(`${label} succeeded`, { path });
+        return result;
+      } catch (error) {
+        console.error(`${label} failed`, { path, code: error?.code, message: error?.message }, error);
+        throw error;
+      }
+    }
     async function createServer(){
       const user = auth.currentUser;
       if (!isGoogleUser(user)) { setServerStatus('サーバー機能を使うにはGoogleログインが必要です'); return; }
@@ -349,24 +375,59 @@
       const name = String($('serverCreateName').value || `${userName(user)} サーバー`).trim().slice(0, 28);
       $('serverCreateBtn').disabled = true;
       setServerStatus('サーバーを作成しています...');
+      const date = todayKey();
+      const now = Date.now();
       let joinCode = '';
+      let serverSaved = false;
+      let memberSaved = false;
+      let userServerSaved = false;
+      const warnings = [];
       try {
-        const date = todayKey();
         joinCode = await reserveServerJoinCode(serverId, user.uid, date);
-        const now = Date.now();
         const server = { id: serverId, name, icon: '🌐', description: '', hostUid: user.uid, hostName: userName(user), joinCode, joinCodeDate: date, createdAt: now, updatedAt: now };
-        await update(ref(db, `servers/${serverId}`), server);
-        await update(ref(db, `serverMembers/${serverId}/${user.uid}`), { uid: user.uid, name: userName(user), role: 'operator', joinedAt: now, updatedAt: now });
-        await update(ref(db, `userServers/${user.uid}/${serverId}`), { serverId, joinedAt: now, lastOpenedAt: now });
-        const roomId = createServerRoomId();
-        await update(ref(db, `serverRooms/${serverId}/${roomId}`), { id: roomId, type: 'chat', name: '雑談', createdBy: user.uid, createdAt: now, order: now });
+        await runServerWriteStep('servers write', `servers/${serverId}`, () => update(ref(db, `servers/${serverId}`), server));
+        serverSaved = true;
+
+        try {
+          await runServerWriteStep('serverMembers write', `serverMembers/${serverId}/${user.uid}`, () => update(ref(db, `serverMembers/${serverId}/${user.uid}`), { uid: user.uid, name: userName(user), role: 'operator', joinedAt: now, updatedAt: now }));
+          memberSaved = true;
+        } catch (error) {
+          warnings.push(`serverMembers: ${error?.code || error?.message || error}`);
+        }
+
+        try {
+          await runServerWriteStep('userServers write', `userServers/${user.uid}/${serverId}`, () => update(ref(db, `userServers/${user.uid}/${serverId}`), { serverId, joinedAt: now, lastOpenedAt: now }));
+          userServerSaved = true;
+        } catch (error) {
+          warnings.push(`userServers: ${error?.code || error?.message || error}`);
+        }
+
+        try {
+          await runServerWriteStep('serverCodes write', `serverCodes/${joinCode}`, () => update(ref(db, `serverCodes/${joinCode}`), { serverId, joinCode, joinCodeDate: date, createdByUid: user.uid, updatedAt: now }));
+        } catch (error) {
+          warnings.push(`serverCodes: ${error?.code || error?.message || error}`);
+        }
+
+        try {
+          const roomId = createServerRoomId();
+          await runServerWriteStep('serverRooms write', `serverRooms/${serverId}/${roomId}`, () => update(ref(db, `serverRooms/${serverId}/${roomId}`), { id: roomId, type: 'chat', name: '雑談', createdBy: user.uid, createdAt: now, order: now }));
+        } catch (error) {
+          warnings.push(`serverRooms: ${error?.code || error?.message || error}`);
+        }
+
         $('serverJoinCode').value = joinCode;
         renderServerList([server]);
-        subscribeUserServers(user);
-        setServerStatus(`作成しました。今日の参加コード: ${joinCode}`);
+        if (userServerSaved) subscribeUserServers(user);
+        const warningText = warnings.length ? ` 一部保存に失敗: ${warnings.join(' / ')}` : '';
+        setServerStatus(`サーバーを作成しました。今日の参加コード: ${joinCode}${warningText}`);
       } catch (error) {
-        console.error('createServer failed', { uid: user?.uid, displayName: user?.displayName, serverId, joinCode }, error);
-        setServerStatus(describeFirebaseError(error, 'サーバー作成に失敗しました。'));
+        console.error('createServer failed', { uid: user?.uid, displayName: user?.displayName, serverId, joinCode, serverSaved, memberSaved, userServerSaved, code: error?.code, message: error?.message }, error);
+        if (serverSaved) {
+          setServerStatus(`サーバー本体は作成済みです。今日の参加コード: ${joinCode || '-'}。ただし追加保存に失敗しました: ${error?.code || error?.message || error}`);
+          if (joinCode) $('serverJoinCode').value = joinCode;
+        } else {
+          setServerStatus(describeFirebaseError(error, 'サーバー作成に失敗しました。'));
+        }
       } finally {
         $('serverCreateBtn').disabled = false;
       }
@@ -385,8 +446,8 @@
         if (!server || server.joinCode !== code || server.joinCodeDate !== date) { setServerStatus('サーバーが見つかりません。参加コードが古い可能性があります。'); return; }
         const now = Date.now();
         const isHost = server.hostUid === user.uid;
-        await update(ref(db, `serverMembers/${server.id}/${user.uid}`), { uid: user.uid, name: userName(user), role: isHost ? 'operator' : 'member', joinedAt: now, updatedAt: now });
-        await update(ref(db, `userServers/${user.uid}/${server.id}`), { serverId: server.id, joinedAt: now, lastOpenedAt: now });
+        await runServerWriteStep('serverMembers join write', `serverMembers/${server.id}/${user.uid}`, () => update(ref(db, `serverMembers/${server.id}/${user.uid}`), { uid: user.uid, name: userName(user), role: isHost ? 'operator' : 'member', joinedAt: now, updatedAt: now }));
+        await runServerWriteStep('userServers join write', `userServers/${user.uid}/${server.id}`, () => update(ref(db, `userServers/${user.uid}/${server.id}`), { serverId: server.id, joinedAt: now, lastOpenedAt: now }));
         subscribeUserServers(user);
         setServerStatus('サーバーに参加しました。');
       } catch (error) {
