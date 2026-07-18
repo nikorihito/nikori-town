@@ -108,7 +108,7 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js';
     import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, updateProfile } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js';
-    import { getDatabase, ref, update, get, remove, set, push, onValue, off, runTransaction } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
+    import { getDatabase, ref, update, get, remove, set, push, onValue, off, query as dbQuery, orderByChild, equalTo } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
 
     const firebaseConfig = {
       apiKey: 'AIzaSyCy3P-HQhfd8-zpPUJ5YANxwRMuTCjFFAQ',
@@ -245,6 +245,20 @@
     function setServerStatus(text){ $('serverStatus').textContent = text || ''; }
     function safeServerCode(value){ return String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 15); }
     function isServerCode(value){ return /^[A-Z0-9]{15}$/.test(String(value || '')); }
+    function todayKey(){
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+      const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    }
+    function describeFirebaseError(error, fallback){
+      const code = error?.code || '';
+      const message = error?.message || String(error || '');
+      if (code.includes('permission') || /permission|PERMISSION_DENIED/i.test(message)) {
+        return `${fallback} Firebase Realtime Database の書き込み権限が拒否されています。servers / serverMembers / userServers のルールを確認してください。(${code || message})`;
+      }
+      if (code || message) return `${fallback} ${code ? `${code}: ` : ''}${message}`;
+      return fallback;
+    }
     function randomServerCode(){
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       let out = '';
@@ -288,28 +302,45 @@
         subscribeUserServers(user);
       }
     }
-    async function reserveServerJoinCode(serverId, uid){
+    async function findServerByJoinCode(code){
+      const snapshot = await get(dbQuery(ref(db, 'servers'), orderByChild('joinCode'), equalTo(code))).catch(error => {
+        console.error('findServerByJoinCode failed', { code }, error);
+        throw error;
+      });
+      const rows = snapshot?.val() || {};
+      return Object.values(rows).find(server => server?.joinCode === code && server?.joinCodeDate === todayKey()) || null;
+    }
+    async function reserveServerJoinCode(serverId, uid, date = todayKey()){
       for (let i = 0; i < 50; i++) {
         const code = randomServerCode();
-        const result = await runTransaction(ref(db, `serverCodes/${code}`), current => {
-          if (current) return;
-          return { serverId, joinCode: code, createdByUid: uid, updatedAt: Date.now() };
-        });
-        if (result.committed) return code;
+        const existing = await findServerByJoinCode(code);
+        if (!existing || existing.id === serverId) return code;
       }
       throw new Error('SERVER_CODE_EXHAUSTED');
+    }
+    async function ensureServerDailyJoinCode(server, uid){
+      const date = todayKey();
+      if (!server?.id || (server.joinCode && server.joinCodeDate === date)) return server;
+      const oldCode = safeServerCode(server.joinCode || '');
+      const joinCode = await reserveServerJoinCode(server.id, uid, date);
+      const patch = { joinCode, joinCodeDate: date, updatedAt: Date.now() };
+      await update(ref(db, `servers/${server.id}`), patch);
+      Object.assign(server, patch);
+      return server;
     }
     async function reissueServerJoinCode(){
       const user = auth.currentUser;
       const server = serverState.activeServer;
       if (!isGoogleUser(user) || !server || !canOperate()) return;
-      const oldCode = safeServerCode(server.joinCode || '');
-      if (oldCode) await remove(ref(db, `serverCodes/${oldCode}`)).catch(console.warn);
-      const joinCode = await reserveServerJoinCode(server.id, user.uid);
-      await update(ref(db, `servers/${server.id}`), { joinCode, updatedAt: Date.now() });
-      serverState.activeServer.joinCode = joinCode;
-      setServerStatus(`新しい参加コード: ${joinCode}`);
-      renderServerSettings();
+      try {
+        await ensureServerDailyJoinCode({ ...server, joinCodeDate: '' }, user.uid);
+        Object.assign(serverState.activeServer, (await get(ref(db, `servers/${server.id}`)).catch(() => null))?.val() || {});
+        setServerStatus(`新しい参加コード: ${serverState.activeServer.joinCode}`);
+        renderServerSettings();
+      } catch (error) {
+        console.error('reissueServerJoinCode failed', { uid: user.uid, serverId: server.id }, error);
+        setServerStatus(describeFirebaseError(error, '参加コードの再発行に失敗しました。'));
+      }
     }
     async function createServer(){
       const user = auth.currentUser;
@@ -318,19 +349,24 @@
       const name = String($('serverCreateName').value || `${userName(user)} サーバー`).trim().slice(0, 28);
       $('serverCreateBtn').disabled = true;
       setServerStatus('サーバーを作成しています...');
+      let joinCode = '';
       try {
-        const joinCode = await reserveServerJoinCode(serverId, user.uid);
+        const date = todayKey();
+        joinCode = await reserveServerJoinCode(serverId, user.uid, date);
         const now = Date.now();
-        await update(ref(db, `servers/${serverId}`), { id: serverId, name, icon: '🌐', description: '', hostUid: user.uid, hostName: userName(user), joinCode, createdAt: now, updatedAt: now });
+        const server = { id: serverId, name, icon: '🌐', description: '', hostUid: user.uid, hostName: userName(user), joinCode, joinCodeDate: date, createdAt: now, updatedAt: now };
+        await update(ref(db, `servers/${serverId}`), server);
         await update(ref(db, `serverMembers/${serverId}/${user.uid}`), { uid: user.uid, name: userName(user), role: 'operator', joinedAt: now, updatedAt: now });
         await update(ref(db, `userServers/${user.uid}/${serverId}`), { serverId, joinedAt: now, lastOpenedAt: now });
         const roomId = createServerRoomId();
         await update(ref(db, `serverRooms/${serverId}/${roomId}`), { id: roomId, type: 'chat', name: '雑談', createdBy: user.uid, createdAt: now, order: now });
         $('serverJoinCode').value = joinCode;
-        setServerStatus(`作成しました。参加コード: ${joinCode}`);
+        renderServerList([server]);
+        subscribeUserServers(user);
+        setServerStatus(`作成しました。今日の参加コード: ${joinCode}`);
       } catch (error) {
-        console.error(error);
-        setServerStatus('サーバー作成に失敗しました。');
+        console.error('createServer failed', { uid: user?.uid, displayName: user?.displayName, serverId, joinCode }, error);
+        setServerStatus(describeFirebaseError(error, 'サーバー作成に失敗しました。'));
       } finally {
         $('serverCreateBtn').disabled = false;
       }
@@ -344,22 +380,23 @@
       $('serverJoinBtn').disabled = true;
       setServerStatus('サーバーを探しています...');
       try {
-        const codeData = (await get(ref(db, `serverCodes/${code}`)).catch(() => null))?.val();
-        if (!codeData?.serverId) { setServerStatus('サーバーが見つかりません。'); return; }
-        const server = (await get(ref(db, `servers/${codeData.serverId}`)).catch(() => null))?.val();
-        if (!server) { setServerStatus('サーバーが見つかりません。'); return; }
+        const date = todayKey();
+        const server = await findServerByJoinCode(code);
+        if (!server || server.joinCode !== code || server.joinCodeDate !== date) { setServerStatus('サーバーが見つかりません。参加コードが古い可能性があります。'); return; }
         const now = Date.now();
         const isHost = server.hostUid === user.uid;
         await update(ref(db, `serverMembers/${server.id}/${user.uid}`), { uid: user.uid, name: userName(user), role: isHost ? 'operator' : 'member', joinedAt: now, updatedAt: now });
         await update(ref(db, `userServers/${user.uid}/${server.id}`), { serverId: server.id, joinedAt: now, lastOpenedAt: now });
+        subscribeUserServers(user);
         setServerStatus('サーバーに参加しました。');
       } catch (error) {
-        console.error(error);
-        setServerStatus('サーバー参加に失敗しました。');
+        console.error('joinServerByCode failed', { uid: user?.uid, code }, error);
+        setServerStatus(describeFirebaseError(error, 'サーバー参加に失敗しました。'));
       } finally {
         $('serverJoinBtn').disabled = false;
       }
-    }    async function findRoomByCode(code){
+    }
+    async function findRoomByCode(code){
       if (!isRoomCode(code)) return null;
 
       const codeSnapshot = await get(ref(db, `roomCodes/${code}`)).catch(() => null);
@@ -425,9 +462,16 @@
     async function openServer(serverId){
       const user = auth.currentUser;
       if (!isGoogleUser(user)) { setServerStatus('サーバー機能を使うにはGoogleログインが必要です'); return; }
-      const server = (await get(ref(db, `servers/${serverId}`)).catch(() => null))?.val();
+      let server = (await get(ref(db, `servers/${serverId}`)).catch(() => null))?.val();
       const member = (await get(ref(db, `serverMembers/${serverId}/${user.uid}`)).catch(() => null))?.val();
       if (!server || !member) { setServerStatus('サーバーに参加していません。'); return; }
+      if (member.role === 'operator') {
+        server = await ensureServerDailyJoinCode({ ...server, id: server.id || serverId }, user.uid).catch(error => {
+          console.error('ensureServerDailyJoinCode on open failed', { uid: user.uid, serverId }, error);
+          setServerStatus(describeFirebaseError(error, '今日の参加コード更新に失敗しました。'));
+          return server;
+        });
+      }
       closeActiveServer();
       serverState.activeServer = { ...server, id: server.id || serverId };
       serverState.activeMember = member;
@@ -659,7 +703,7 @@
       $('serverSettingName').value = server.name || '';
       $('serverSettingIcon').value = server.icon || '🌐';
       $('serverSettingDescription').value = server.description || '';
-      $('serverJoinCodeDisplay').textContent = `参加コード: ${server.joinCode || '-'}`;
+      $('serverJoinCodeDisplay').textContent = `参加コード: ${server.joinCode || '-'} / 有効日: ${server.joinCodeDate || '-'}`;
       $('serverSettingSaveBtn').onclick = saveServerSettings;
       $('serverReissueBtn').onclick = reissueServerJoinCode;
       renderRoleTools();
