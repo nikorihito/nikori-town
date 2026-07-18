@@ -629,6 +629,7 @@
       push,
       limitToLast,
       query,
+      runTransaction,
       serverTimestamp
     } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
@@ -773,18 +774,18 @@
       currentFloorId = MAPS[currentMapIndex].floors[0].id;
     }
 
-    const roomCodeParam = safeRoomCode(params.get("roomCode") || params.get("roomId") || params.get("room") || localStorage.getItem(LS_ROOM_CODE) || localStorage.getItem(LS_ROOM) || "");
-    const room = roomCodeParam;
+    const room = safeRoom(params.get("roomId") || params.get("room") || localStorage.getItem(LS_ROOM) || "");
+    const initialJoinCode = safeRoomCode(params.get("roomCode") || localStorage.getItem(LS_ROOM_CODE) || "");
     const playerName = safeName(params.get("name") || localStorage.getItem(LS_NAME) || "ゲスト");
     let selectedSkin = normalizeSkin(params.get("skin") || localStorage.getItem(LS_SKIN) || "nikorihito");
 
-    if (!/^\d{6}$/.test(room)) {
-      alert("6ケタのルーム番号がありません。index.htmlから入り直してください。");
+    if (!room) {
+      alert("ルームIDがありません。index.htmlから入り直してください。");
       location.href = "./index.html";
     }
 
     localStorage.setItem(LS_ROOM, room);
-    localStorage.setItem(LS_ROOM_CODE, room);
+    if (initialJoinCode) localStorage.setItem(LS_ROOM_CODE, initialJoinCode);
     localStorage.setItem(LS_NAME, playerName);
     localStorage.setItem(LS_SKIN, selectedSkin);
 
@@ -899,6 +900,8 @@
       mapLoaded: false,
       collisionLoaded: false,
       inMeetingArea: false,
+      hostUid: "",
+      currentJoinCode: initialJoinCode,
       lastPush: 0,
       lastFrame: performance.now()
     };
@@ -1002,6 +1005,14 @@
       return String(value || "").replace(/\D/g, "").slice(0, 6);
     }
 
+    function isRoomCode(value) {
+      return /^\d{6}$/.test(String(value || ""));
+    }
+
+    function randomRoomCode() {
+      return String(Math.floor(100000 + Math.random() * 900000));
+    }
+
     function safeRoom(value) {
       return String(value || "")
         .trim()
@@ -1010,6 +1021,61 @@
         .replace(/[^\w\-ぁ-んァ-ヶ一-龠]/g, "-")
         .replace(/-+/g, "-")
         .slice(0, 32);
+    }
+
+    function isHostUid(uid) {
+      return Boolean(uid && state.hostUid && uid === state.hostUid);
+    }
+
+    function nameWithHostCrown(name, uid, explicitHost = false) {
+      return `${safeName(name)}${explicitHost || isHostUid(uid) ? " 👑" : ""}`;
+    }
+
+    function refreshRoomShare(joinCode = state.currentJoinCode || initialJoinCode || "") {
+      const displayCode = isRoomCode(joinCode) ? joinCode : "";
+      state.currentJoinCode = displayCode;
+      roomShareInput.value = displayCode || room;
+      roomLabel.textContent = displayCode || room;
+      if (displayCode) localStorage.setItem(LS_ROOM_CODE, displayCode);
+    }
+
+    async function issueJoinCodeForHost(uid) {
+      const oldCode = safeRoomCode((await get(ref(db, `rooms/${room}/joinCode`)).catch(() => null))?.val() || state.currentJoinCode || (isRoomCode(room) ? room : ""));
+      if (oldCode) {
+        const oldCodeSnapshot = await get(ref(db, `roomCodes/${oldCode}`)).catch(() => null);
+        const oldCodeValue = oldCodeSnapshot?.val();
+        if (!oldCodeValue || oldCodeValue.roomId === room) {
+          await remove(ref(db, `roomCodes/${oldCode}`)).catch(console.warn);
+        }
+      }
+
+      for (let i = 0; i < 40; i++) {
+        const code = randomRoomCode();
+        const result = await runTransaction(ref(db, `roomCodes/${code}`), (current) => {
+          if (current) return;
+          return { roomId: room, joinCode: code, hostUid: uid, updatedAt: Date.now() };
+        });
+
+        if (!result.committed) continue;
+
+        const now = Date.now();
+        await update(ref(db, `rooms/${room}`), {
+          joinCode: code,
+          joinCodeUpdatedAt: now,
+          hostUid: uid,
+          updatedAt: now
+        });
+        await update(ref(db, `roomMeta/${room}`), {
+          joinCode: code,
+          joinCodeUpdatedAt: now,
+          hostUid: uid,
+          updatedAt: now
+        });
+        refreshRoomShare(code);
+        return code;
+      }
+
+      throw new Error("JOIN_CODE_EXHAUSTED");
     }
 
     function normalizeSkin(value) {
@@ -1276,6 +1342,7 @@
       const payload = {
         uid: player.uid,
         name: player.name,
+        isHost: isHostUid(player.uid),
         text,
         chatScope: getMeetingScopeAt(player.x, player.y) || { type: "public" },
         createdAt: serverTimestamp()
@@ -1285,6 +1352,8 @@
         payload.replyTo = {
           id: replyTarget.id,
           name: safeName(replyTarget.name),
+          uid: replyTarget.uid || "",
+          isHost: Boolean(replyTarget.isHost),
           text: String(replyTarget.text || "").slice(0, 80)
         };
       }
@@ -1306,6 +1375,8 @@
     function setReplyTarget(message) {
       replyTarget = {
         id: message.id,
+        uid: message.uid || "",
+        isHost: Boolean(message.isHost),
         name: safeName(message.name),
         text: String(message.text || "")
       };
@@ -1384,6 +1455,7 @@
       await update(ref(db, `rooms/${room}/players/${player.uid}`), {
         uid: player.uid,
         name: player.name,
+        isHost: isHostUid(player.uid),
         x: Math.round(player.x),
         y: Math.round(player.y),
         dir: player.dir,
@@ -1432,6 +1504,10 @@
 
       onValue(roomStateRef, (snapshot) => {
         const data = snapshot.val() || {};
+        if (data.hostUid || data.createdByUid) {
+          state.hostUid = data.hostUid || data.createdByUid;
+          nameLabel.textContent = nameWithHostCrown(player.name, player.uid);
+        }
         const currentMap = getMapDefinition();
         const nextFloorId = currentMap.type === "building" ? (data.floorId || currentFloorId || currentMap.floors[0].id) : "";
 
@@ -1466,7 +1542,7 @@
         if (message.replyTo) {
           const reply = document.createElement("div");
           reply.className = "reply-preview";
-          reply.textContent = `↩ ${safeName(message.replyTo.name)}: ${String(message.replyTo.text || "").slice(0, 80)}`;
+          reply.textContent = `↩ ${nameWithHostCrown(message.replyTo.name, message.replyTo.uid, message.replyTo.isHost)}: ${String(message.replyTo.text || "").slice(0, 80)}`;
           item.appendChild(reply);
         }
 
@@ -1475,7 +1551,7 @@
 
         const name = document.createElement("span");
         name.className = "message-name";
-        name.textContent = safeName(message.name) + ":";
+        name.textContent = nameWithHostCrown(message.name, message.uid, message.isHost) + ":";
         name.title = "クリックでメンション";
         name.addEventListener("click", () => insertMention(message.name));
 
@@ -1791,6 +1867,7 @@
               dir: player.dir,
               skin: player.skin,
               flying: player.flying,
+              isHost: isHostUid(player.uid),
               reaction: player.reaction,
               reactionUntil: player.reactionUntil
             };
@@ -1973,7 +2050,7 @@
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
-      const text = safeName(p.name);
+      const text = nameWithHostCrown(p.name, p.uid, p.isHost);
       const metrics = ctx.measureText(text);
       const width = metrics.width + 16;
 
@@ -2035,7 +2112,41 @@
       player.skin = selectedSkin;
       player.dir = "front";
 
-      const existingState = await get(ref(db, `rooms/${room}/roomState`)).then((snapshot) => snapshot.val()).catch(() => null);
+      const [
+        existingStateSnapshot,
+        metaSnapshot,
+        rootHostSnapshot,
+        rootCreatedSnapshot,
+        rootJoinCodeSnapshot
+      ] = await Promise.all([
+        get(ref(db, `rooms/${room}/roomState`)).catch(() => null),
+        get(ref(db, `roomMeta/${room}`)).catch(() => null),
+        get(ref(db, `rooms/${room}/hostUid`)).catch(() => null),
+        get(ref(db, `rooms/${room}/createdByUid`)).catch(() => null),
+        get(ref(db, `rooms/${room}/joinCode`)).catch(() => null)
+      ]);
+      const existingState = existingStateSnapshot?.val() || null;
+      const roomMeta = metaSnapshot?.val() || {};
+      const resolvedHostUid = rootHostSnapshot?.val() || roomMeta.hostUid || existingState?.hostUid || rootCreatedSnapshot?.val() || roomMeta.createdByUid || existingState?.createdByUid || "";
+      state.hostUid = resolvedHostUid || user.uid;
+
+      if (!resolvedHostUid) {
+        await update(ref(db, `rooms/${room}`), {
+          hostUid: state.hostUid,
+          createdByUid: state.hostUid
+        }).catch(console.warn);
+      }
+
+      if (isHostUid(user.uid)) {
+        await issueJoinCodeForHost(user.uid).catch((error) => {
+          console.warn(error);
+          refreshRoomShare(rootJoinCodeSnapshot?.val() || roomMeta.joinCode || initialJoinCode);
+        });
+      } else {
+        refreshRoomShare(rootJoinCodeSnapshot?.val() || roomMeta.joinCode || initialJoinCode);
+      }
+
+      nameLabel.textContent = nameWithHostCrown(player.name, player.uid);
       if (existingState?.mapId || Number.isFinite(Number(existingState?.mapIndex))) {
         currentMapIndex = resolveMapIndex(existingState.mapId ?? existingState.mapIndex);
         const mapData = getMapDefinition();
@@ -2054,6 +2165,7 @@
       await set(playerRef, {
         uid: player.uid,
         name: player.name,
+        isHost: isHostUid(player.uid),
         x: Math.round(player.x),
         y: Math.round(player.y),
         dir: player.dir,
@@ -2071,7 +2183,9 @@
       await update(ref(db, `roomMeta/${room}`), {
         room,
         roomId: room,
-        roomCode: room,
+        joinCode: state.currentJoinCode || "",
+        hostUid: state.hostUid,
+        createdByUid: state.hostUid,
         roomName: `ルーム ${room}`,
         passwordEnabled: false,
         updatedAt: Date.now()
@@ -2081,6 +2195,8 @@
         mapIndex: currentMapIndex,
         mapId: getActiveMapData().id,
         floorId: currentFloorId,
+        hostUid: state.hostUid,
+        createdByUid: state.hostUid,
         updatedAt: serverTimestamp()
       }).catch(console.warn);
 

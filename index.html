@@ -67,7 +67,7 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js';
     import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, updateProfile } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js';
-    import { getDatabase, ref, update, get, remove, runTransaction } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
+    import { getDatabase, ref, update, get, remove } from 'https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js';
 
     const firebaseConfig = {
       apiKey: 'AIzaSyCy3P-HQhfd8-zpPUJ5YANxwRMuTCjFFAQ',
@@ -102,7 +102,7 @@
     ];
 
     $('guestName').value = localStorage.getItem(LS_NAME) || '';
-    $('roomCode').value = safeRoomCode(localStorage.getItem(LS_ROOM_CODE) || localStorage.getItem(LS_ROOM) || '');
+    $('roomCode').value = safeRoomCode(localStorage.getItem(LS_ROOM_CODE) || '');
     $('playerName').value = localStorage.getItem(LS_NAME) || '';
 
     const provider = new GoogleAuthProvider();
@@ -114,6 +114,9 @@
     function safeRoomCode(raw){ return String(raw || '').replace(/\D/g, '').slice(0, 6); }
     function isRoomCode(value){ return /^\d{6}$/.test(String(value || '')); }
     function randomRoomCode(){ return String(Math.floor(100000 + Math.random() * 900000)); }
+    function createRoomId(){
+      return `room_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    }
     function safeName(raw){ const name = String(raw || '').trim().slice(0,16); return name || 'ゲスト'; }
     function normalizeSkin(raw){ return raw === 'turuturu' ? 'turuturu' : 'nikorihito'; }
     function getSelectedSkin(){ return normalizeSkin(localStorage.getItem(LS_SKIN) || 'nikorihito'); }
@@ -171,33 +174,15 @@
     }
     function userName(user){ return safeName(user?.displayName || localStorage.getItem(LS_NAME) || 'ゲスト'); }
     function roomTitle(code){ return `ルーム ${code}`; }
-    async function reserveRoomCode(uid){
-      for (let i = 0; i < 30; i++) {
-        const code = randomRoomCode();
-        const result = await runTransaction(ref(db, `roomCodes/${code}`), (current) => {
-          if (current) return;
-          return { roomId: code, roomCode: code, createdByUid: uid, createdAt: Date.now() };
-        });
-
-        if (result.committed) {
-          return code;
-        }
-      }
-
-      throw new Error('ROOM_CODE_EXHAUSTED');
-    }
     async function findRoomByCode(code){
       if (!isRoomCode(code)) return null;
 
       const codeSnapshot = await get(ref(db, `roomCodes/${code}`)).catch(() => null);
       if (codeSnapshot?.exists()) {
         const value = codeSnapshot.val();
-        return { roomId: value.roomId || code, roomCode: value.roomCode || code };
-      }
-
-      const stateSnapshot = await get(ref(db, `rooms/${code}/roomState`)).catch(() => null);
-      if (stateSnapshot?.exists()) {
-        return { roomId: code, roomCode: code };
+        if (value?.roomId) {
+          return { roomId: value.roomId, joinCode: code };
+        }
       }
 
       return null;
@@ -291,7 +276,7 @@
         main.className = 'history-main';
         const title = document.createElement('div');
         title.className = 'history-title';
-        title.textContent = item.roomName || roomTitle(item.roomCode || item.roomId);
+        title.textContent = item.roomName || roomTitle(item.roomId);
         const sub = document.createElement('div');
         sub.className = 'history-sub';
         const floorText = item.floorName ? ` / ${item.floorName}` : '';
@@ -320,40 +305,37 @@
       if (!user) { setRoomStatus('先にログインしてください。'); return; }
 
       const name = safeName($('playerName').value || userName(user) || item.lastPlayerName);
-      const roomCode = safeRoomCode(item.roomCode || item.roomId);
-      if (!isRoomCode(roomCode)) { setRoomStatus('履歴のルーム番号が正しくありません。'); return; }
+      const roomId = String(item.roomId || '').trim();
+      if (!roomId) { setRoomStatus('履歴のルームIDが正しくありません。'); return; }
       const mapIndex = normalizeMap(item.mapId);
       const map = getMap(mapIndex);
       const floor = findFloor(map, item.floorId);
       const now = Date.now();
-      localStorage.setItem(LS_ROOM, roomCode);
-      localStorage.setItem(LS_ROOM_CODE, roomCode);
+      localStorage.setItem(LS_ROOM, roomId);
       localStorage.setItem(LS_NAME, name);
       localStorage.setItem(LS_MAP, map.id);
       await saveMapHistory(user, {
         ...item,
-        roomId: roomCode,
-        roomCode,
-        roomName: item.roomName || roomTitle(roomCode),
+        roomId,
+        roomName: item.roomName || roomTitle(roomId),
         mapId: map.id,
         mapName: map.name,
         floorId: floor?.id || '',
         floorName: floor?.name || '',
         updatedAt: now,
-        ownerUid: item.ownerUid || user.uid,
-        createdByUid: item.createdByUid || user.uid,
+        ownerUid: item.ownerUid || item.createdByUid || user.uid,
+        createdByUid: item.createdByUid || item.ownerUid || user.uid,
         lastPlayerName: name
       });
 
       const u = new URL('./room.html', location.href);
-      u.searchParams.set('roomCode', roomCode);
+      u.searchParams.set('roomId', roomId);
       u.searchParams.set('name', name);
       u.searchParams.set('skin', getSelectedSkin());
       u.searchParams.set('map', map.id);
       if (floor?.id) u.searchParams.set('floor', floor.id);
       location.href = u.toString();
     }
-
     async function loginGuest(){
       $('guestLoginBtn').disabled = true; $('googleLoginBtn').disabled = true; setLoginStatus('ゲストログイン中...');
       try {
@@ -400,62 +382,80 @@
       }
     });
 
-    async function openRoom({ roomCode, user, name, skin, map, floor, isNewRoom }) {
+    async function openRoom({ roomId, joinCode = '', user, name, skin, map, floor, isNewRoom }) {
       const floorId = floor?.id || '';
       const now = Date.now();
+      const roomName = roomTitle(roomId);
 
-      localStorage.setItem(LS_ROOM, roomCode);
-      localStorage.setItem(LS_ROOM_CODE, roomCode);
+      localStorage.setItem(LS_ROOM, roomId);
+      if (joinCode) localStorage.setItem(LS_ROOM_CODE, joinCode);
       localStorage.setItem(LS_NAME, name);
       localStorage.setItem(LS_SKIN, skin);
       localStorage.setItem(LS_MAP, map.id);
 
-      await update(ref(db, `roomMeta/${roomCode}`), {
-        room: roomCode,
-        roomId: roomCode,
-        roomCode,
-        roomName: roomTitle(roomCode),
+      const meta = {
+        room: roomId,
+        roomId,
+        roomName,
         noAccountMode: true,
         passwordEnabled: false,
         authMode: user.isAnonymous ? 'guest' : 'google',
         updatedAt: now,
         lastJoinUid: user.uid
-      });
+      };
 
       if (isNewRoom) {
-        await update(ref(db, `rooms/${roomCode}/roomState`), {
+        meta.hostUid = user.uid;
+        meta.createdByUid = user.uid;
+        meta.createdAt = now;
+      }
+
+      await update(ref(db, `roomMeta/${roomId}`), meta);
+
+      if (isNewRoom) {
+        await update(ref(db, `rooms/${roomId}/roomState`), {
           mapIndex: normalizeMap(map.id),
           mapId: map.id,
           floorId,
+          hostUid: user.uid,
           createdByUid: user.uid,
+          createdAt: now,
+          updatedAt: now
+        }).catch(console.warn);
+        await update(ref(db, `rooms/${roomId}`), {
+          hostUid: user.uid,
+          createdByUid: user.uid,
+          createdAt: now,
           updatedAt: now
         }).catch(console.warn);
       }
 
+      const historyMeta = isNewRoom
+        ? { hostUid: user.uid, createdByUid: user.uid }
+        : ((await get(ref(db, `roomMeta/${roomId}`)).catch(() => null))?.val() || {});
+
       await saveMapHistory(user, {
-        roomId: roomCode,
-        roomCode,
-        roomName: roomTitle(roomCode),
+        roomId,
+        roomName,
         mapId: map.id,
         mapName: map.name,
         floorId,
         floorName: floor?.name || '',
         joinedAt: now,
         updatedAt: now,
-        ownerUid: user.uid,
-        createdByUid: user.uid,
+        ownerUid: historyMeta.hostUid || historyMeta.ownerUid || historyMeta.createdByUid || '',
+        createdByUid: historyMeta.createdByUid || historyMeta.hostUid || historyMeta.ownerUid || '',
         lastPlayerName: name
       });
 
       const u = new URL('./room.html', location.href);
-      u.searchParams.set('roomCode', roomCode);
+      u.searchParams.set('roomId', roomId);
       u.searchParams.set('name', name);
       u.searchParams.set('skin', skin);
       u.searchParams.set('map', map.id);
       if (floorId) u.searchParams.set('floor', floorId);
       location.href = u.toString();
     }
-
     async function enterRoom(){
       const user = auth.currentUser;
       if (!user) { setRoomStatus('先にGoogleログインまたはゲストログインしてください。'); return; }
@@ -473,7 +473,7 @@
         const state = await get(ref(db, `rooms/${found.roomId}/roomState`)).then(snapshot => snapshot.val()).catch(() => null);
         const map = getMap(normalizeMap(state?.mapId));
         const floor = findFloor(map, state?.floorId);
-        await openRoom({ roomCode: found.roomId, user, name, skin, map, floor, isNewRoom: false });
+        await openRoom({ roomId: found.roomId, joinCode: roomCode, user, name, skin, map, floor, isNewRoom: false });
       } catch (e) {
         console.error(e); setRoomStatus('入室準備に失敗しました。Firebaseの設定またはDBルールを確認してください。'); $('enterRoomBtn').disabled = false;
       }
@@ -489,9 +489,8 @@
       $('createRoomBtn').disabled = true; $('enterRoomBtn').disabled = true; setRoomStatus('ルーム番号を発行しています...');
       try {
         if (user.isAnonymous && user.displayName !== name) { try { await updateProfile(user, { displayName:name }); } catch {} }
-        const roomCode = await reserveRoomCode(user.uid);
-        $('roomCode').value = roomCode;
-        await openRoom({ roomCode, user, name, skin, map, floor, isNewRoom: true });
+        const roomId = createRoomId();
+        await openRoom({ roomId, user, name, skin, map, floor, isNewRoom: true });
       } catch (e) {
         console.error(e); setRoomStatus('ルーム番号の発行に失敗しました。もう一度試してください。'); $('createRoomBtn').disabled = false; $('enterRoomBtn').disabled = false;
       }
