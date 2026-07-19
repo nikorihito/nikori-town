@@ -218,6 +218,8 @@
     .member-role{font-size:11px;color:var(--muted)}
     .info-card{padding:13px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.68)}
     .server-map-wrap{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;gap:10px;min-height:0;flex:1}
+    .server-map-embed{display:grid;grid-template-rows:minmax(0,1fr);min-height:0;flex:1}
+    .server-map-frame{width:100%;height:100%;min-height:620px;border:1px solid var(--line);border-radius:24px;background:#dff9ff;box-shadow:var(--soft-shadow)}
     .server-map-stage{position:relative;align-self:start;width:100%;max-height:100%;aspect-ratio:16 / 9;border:1px solid var(--line);border-radius:24px;overflow:hidden;background:linear-gradient(135deg,#dff9ff,#e9fff8 46%,#f1edff)}
     #serverMapCanvas{display:block;width:100%;height:100%;background:transparent;outline:none}
     .server-map-toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
@@ -235,7 +237,7 @@
     [hidden]{display:none!important}
     @media(min-width:1500px){.server-workspace{grid-template-columns:230px 290px minmax(760px,1fr) 280px}}
     @media(max-width:1180px){.server-workspace{grid-template-columns:220px 260px 1fr;height:auto}.right-pane{grid-column:1 / -1}.server-actions{grid-template-columns:1fr}}
-    @media(max-width:820px){.shell{width:min(100% - 22px,720px)}.topbar{align-items:flex-start;flex-direction:column}.server-workspace{grid-template-columns:1fr;min-height:0}.chat-form{grid-template-columns:1fr}.server-card{grid-template-columns:auto 1fr}.server-card button{grid-column:1 / -1}.action-card button{justify-self:stretch}}
+    @media(max-width:820px){.shell{width:min(100% - 22px,720px)}.topbar{align-items:flex-start;flex-direction:column}.server-workspace{grid-template-columns:1fr;min-height:0}.chat-form{grid-template-columns:1fr}.server-card{grid-template-columns:auto 1fr}.server-card button{grid-column:1 / -1}.action-card button{justify-self:stretch}.server-map-frame{min-height:72vh}}
   </style>
   <link rel="stylesheet" href="./wave-ui.css" />
 </head>
@@ -1003,6 +1005,27 @@
       const serverId = getServerId(state.activeServer);
       const roomId = room.roomId || room.id;
       state.mapRoomId = roomId;
+      const mapId = room.mapId || state.mapState?.mapId || 'lakeside_park';
+      const floorId = room.floorId || state.mapState?.floorId || '';
+      const mapParams = new URLSearchParams({
+        serverMap:'1',
+        embedded:'1',
+        serverId,
+        room:roomId,
+        name:userName(auth.currentUser),
+        map:mapId
+      });
+      if (floorId) mapParams.set('floor', floorId);
+      $('serverRoomContent').innerHTML = `
+        <div class="server-map-embed">
+          <iframe
+            class="server-map-frame"
+            title="${safeText(room.name)}"
+            src="./room.html?${mapParams.toString()}"
+            allow="clipboard-write; microphone; camera; display-capture"
+          ></iframe>
+        </div>`;
+      return;
       $('serverRoomContent').innerHTML = `
         <div class="server-map-wrap">
           <div class="server-map-toolbar">

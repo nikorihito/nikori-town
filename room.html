@@ -55,6 +55,20 @@
       image-rendering: auto;
     }
 
+    body.embedded-room .topbar {
+      top: 8px;
+      left: 8px;
+      right: 8px;
+    }
+
+    body.embedded-room .info,
+    body.embedded-room .btn {
+      min-height: 36px;
+      padding: 8px 10px;
+      border-radius: 13px;
+      font-size: 12px;
+    }
+
     .topbar {
       position: fixed;
       top: max(12px, env(safe-area-inset-top));
@@ -775,18 +789,27 @@
       currentFloorId = MAPS[currentMapIndex].floors[0].id;
     }
 
+    const serverMapMode = params.get("serverMap") === "1";
+    const embeddedMode = params.get("embedded") === "1";
+    const serverId = safeServerKey(params.get("serverId") || "");
     const room = safeRoom(params.get("roomId") || params.get("room") || localStorage.getItem(LS_ROOM) || "");
     const initialJoinCode = safeRoomCode(params.get("roomCode") || localStorage.getItem(LS_ROOM_CODE) || "");
     const playerName = safeName(params.get("name") || localStorage.getItem(LS_NAME) || "ゲスト");
     let selectedSkin = normalizeSkin(params.get("skin") || localStorage.getItem(LS_SKIN) || "nikorihito");
 
-    if (!room) {
-      alert("ルームIDがありません。index.htmlから入り直してください。");
-      location.href = "./index.html";
+    if (embeddedMode) {
+      document.body.classList.add("embedded-room");
     }
 
-    localStorage.setItem(LS_ROOM, room);
-    if (initialJoinCode) localStorage.setItem(LS_ROOM_CODE, initialJoinCode);
+    if (!room || (serverMapMode && !serverId)) {
+      alert("ルームIDがありません。index.htmlから入り直してください。");
+      location.href = serverMapMode ? "./server.html" : "./index.html";
+    }
+
+    if (!serverMapMode) {
+      localStorage.setItem(LS_ROOM, room);
+      if (initialJoinCode) localStorage.setItem(LS_ROOM_CODE, initialJoinCode);
+    }
     localStorage.setItem(LS_NAME, playerName);
     localStorage.setItem(LS_SKIN, selectedSkin);
 
@@ -824,6 +847,14 @@
     roomLabel.textContent = room;
     nameLabel.textContent = playerName;
     roomShareInput.value = room;
+
+    const roomRootPath = () => serverMapMode ? `serverMapRooms/${serverId}/${room}` : `rooms/${room}`;
+    const playersPath = () => serverMapMode ? `serverMapPlayers/${serverId}/${room}` : `rooms/${room}/players`;
+    const playerPath = (uid) => `${playersPath()}/${uid}`;
+    const messagesPath = () => serverMapMode ? `serverMapMessages/${serverId}/${room}` : `rooms/${room}/messages`;
+    const messagePath = (messageId) => `${messagesPath()}/${messageId}`;
+    const roomStatePath = () => serverMapMode ? `serverMapState/${serverId}/${room}` : `rooms/${room}/roomState`;
+    const roomMetaPath = () => serverMapMode ? `serverMapRooms/${serverId}/${room}` : `roomMeta/${room}`;
 
     const ASSETS = {
       airplane: "./nikori_airplane.png",
@@ -1024,6 +1055,15 @@
         .slice(0, 32);
     }
 
+    function safeServerKey(value) {
+      return String(value || "")
+        .trim()
+        .replace(/[.#$/\[\]\/]/g, "-")
+        .replace(/[^\w\-]/g, "-")
+        .replace(/-+/g, "-")
+        .slice(0, 80);
+    }
+
     function isHostUid(uid) {
       return Boolean(uid && state.hostUid && uid === state.hostUid);
     }
@@ -1157,7 +1197,7 @@
       await pushPlayer(true);
 
       if (player.uid) {
-        await update(ref(db, `rooms/${room}/roomState`), {
+        await update(ref(db, roomStatePath()), {
           mapIndex: currentMapIndex,
           mapId: getActiveMapData().id,
           floorId: currentFloorId,
@@ -1332,7 +1372,7 @@
       chatInput.value = "";
 
       if (editingMessage) {
-        await update(ref(db, `rooms/${room}/messages/${editingMessage.id}`), {
+        await update(ref(db, messagePath(editingMessage.id)), {
           text,
           editedAt: serverTimestamp()
         });
@@ -1361,7 +1401,7 @@
 
       clearComposeState();
 
-      await set(push(ref(db, `rooms/${room}/messages`)), payload);
+      await set(push(ref(db, messagesPath())), payload);
     });
 
     function clearComposeState() {
@@ -1421,13 +1461,13 @@
       const ok = confirm("このメッセージを削除しますか？");
       if (!ok) return;
 
-      await remove(ref(db, `rooms/${room}/messages/${message.id}`));
+      await remove(ref(db, messagePath(message.id)));
     }
 
     async function reactToMessage(message, reactionKey) {
       if (!player.uid) return;
 
-      const reactionPath = `rooms/${room}/messages/${message.id}/reactions/${reactionKey}/${player.uid}`;
+      const reactionPath = `${messagesPath()}/${message.id}/reactions/${reactionKey}/${player.uid}`;
       await set(ref(db, reactionPath), true);
     }
 
@@ -1453,7 +1493,7 @@
       player.meetingScope = getMeetingScopeAt(player.x, player.y);
       state.inMeetingArea = Boolean(player.meetingScope);
 
-      await update(ref(db, `rooms/${room}/players/${player.uid}`), {
+      await update(ref(db, playerPath(player.uid)), {
         uid: player.uid,
         name: player.name,
         isHost: isHostUid(player.uid),
@@ -1472,7 +1512,7 @@
     }
 
     function subscribePlayers() {
-      const playersRef = ref(db, `rooms/${room}/players`);
+      const playersRef = ref(db, playersPath());
 
       onValue(playersRef, (snapshot) => {
         state.players = snapshot.val() || {};
@@ -1481,7 +1521,7 @@
     }
 
     function subscribeMessages() {
-      const messagesRef = query(ref(db, `rooms/${room}/messages`), limitToLast(40));
+      const messagesRef = query(ref(db, messagesPath()), limitToLast(40));
 
       onValue(messagesRef, (snapshot) => {
         const data = snapshot.val() || {};
@@ -1501,7 +1541,7 @@
     }
 
     function subscribeRoomState() {
-      const roomStateRef = ref(db, `rooms/${room}/roomState`);
+      const roomStateRef = ref(db, roomStatePath());
 
       onValue(roomStateRef, (snapshot) => {
         const data = snapshot.val() || {};
@@ -2120,25 +2160,27 @@
         rootCreatedSnapshot,
         rootJoinCodeSnapshot
       ] = await Promise.all([
-        get(ref(db, `rooms/${room}/roomState`)).catch(() => null),
-        get(ref(db, `roomMeta/${room}`)).catch(() => null),
-        get(ref(db, `rooms/${room}/hostUid`)).catch(() => null),
-        get(ref(db, `rooms/${room}/createdByUid`)).catch(() => null),
-        get(ref(db, `rooms/${room}/joinCode`)).catch(() => null)
+        get(ref(db, roomStatePath())).catch(() => null),
+        get(ref(db, roomMetaPath())).catch(() => null),
+        get(ref(db, `${roomRootPath()}/hostUid`)).catch(() => null),
+        get(ref(db, `${roomRootPath()}/createdByUid`)).catch(() => null),
+        serverMapMode ? Promise.resolve(null) : get(ref(db, `rooms/${room}/joinCode`)).catch(() => null)
       ]);
       const existingState = existingStateSnapshot?.val() || null;
       const roomMeta = metaSnapshot?.val() || {};
       const resolvedHostUid = rootHostSnapshot?.val() || roomMeta.hostUid || existingState?.hostUid || rootCreatedSnapshot?.val() || roomMeta.createdByUid || existingState?.createdByUid || "";
       state.hostUid = resolvedHostUid || user.uid;
 
-      if (!resolvedHostUid) {
+      if (!resolvedHostUid && !serverMapMode) {
         await update(ref(db, `rooms/${room}`), {
           hostUid: state.hostUid,
           createdByUid: state.hostUid
         }).catch(console.warn);
       }
 
-      if (isHostUid(user.uid)) {
+      if (serverMapMode) {
+        refreshRoomShare("");
+      } else if (isHostUid(user.uid)) {
         await issueJoinCodeForHost(user.uid).catch((error) => {
           console.warn(error);
           refreshRoomShare(rootJoinCodeSnapshot?.val() || roomMeta.joinCode || initialJoinCode);
@@ -2161,7 +2203,7 @@
       loading.hidden = true;
       chatStatus.textContent = "接続済み";
 
-      const playerRef = ref(db, `rooms/${room}/players/${player.uid}`);
+      const playerRef = ref(db, playerPath(player.uid));
 
       await set(playerRef, {
         uid: player.uid,
@@ -2181,7 +2223,7 @@
         updatedAt: Date.now()
       });
 
-      await update(ref(db, `roomMeta/${room}`), {
+      await update(ref(db, roomMetaPath()), {
         room,
         roomId: room,
         joinCode: state.currentJoinCode || "",
@@ -2192,7 +2234,7 @@
         updatedAt: Date.now()
       });
 
-      await update(ref(db, `rooms/${room}/roomState`), {
+      await update(ref(db, roomStatePath()), {
         mapIndex: currentMapIndex,
         mapId: getActiveMapData().id,
         floorId: currentFloorId,
@@ -2232,7 +2274,7 @@
 
     window.addEventListener("beforeunload", () => {
       if (player.uid) {
-        remove(ref(db, `rooms/${room}/players/${player.uid}`));
+        remove(ref(db, playerPath(player.uid)));
       }
     });
   </script>
