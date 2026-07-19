@@ -299,6 +299,12 @@
       word-break: break-word;
     }
 
+    .message.mentioned-me {
+      background: rgba(14, 165, 233, 0.22);
+      border-color: rgba(34, 211, 238, 0.48);
+      box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.10);
+    }
+
     .message-head {
       display: flex;
       align-items: center;
@@ -352,6 +358,12 @@
       color: var(--text);
       font-size: 12px;
       font-weight: 800;
+    }
+
+    .message-actions button.active {
+      background: rgba(34, 211, 238, 0.92);
+      border-color: rgba(165, 243, 252, 0.85);
+      color: #06202a;
     }
 
     .compose-state {
@@ -1131,6 +1143,8 @@
     const state = {
       started: false,
       players: {},
+      members: {},
+      currentRole: "",
       messages: [],
       worldW: 2200,
       worldH: 1400,
@@ -1654,25 +1668,36 @@
       chatInput.value = "";
 
       if (editingMessage) {
-        await update(ref(db, messagePath(editingMessage.id)), {
-          text,
-          editedAt: serverTimestamp()
-        });
-        clearComposeState();
+        try {
+          await update(ref(db, messagePath(editingMessage.id)), {
+            text,
+            edited: true,
+            updatedAt: serverTimestamp(),
+            editedAt: serverTimestamp()
+          });
+          clearComposeState();
+        } catch (error) {
+          console.error("map chat edit failed", error);
+          showChatNotice("編集に失敗しました");
+        }
         return;
       }
 
+      const messageRef = push(ref(db, messagesPath()));
       const payload = {
+        messageId: messageRef.key,
         uid: player.uid,
         name: player.name,
         isHost: isHostUid(player.uid),
         text,
+        mentions: detectMentions(text),
         chatScope: getMeetingScopeAt(player.x, player.y) || { type: "public" },
         createdAt: serverTimestamp()
       };
 
       if (replyTarget) {
         payload.replyTo = {
+          messageId: replyTarget.id,
           id: replyTarget.id,
           name: safeName(replyTarget.name),
           uid: replyTarget.uid || "",
@@ -1683,7 +1708,12 @@
 
       clearComposeState();
 
-      await set(push(ref(db, messagesPath())), payload);
+      try {
+        await set(messageRef, payload);
+      } catch (error) {
+        console.error("map chat send failed", error);
+        showChatNotice("送信に失敗しました");
+      }
     });
 
     function clearComposeState() {
@@ -1737,20 +1767,67 @@
       chatInput.setSelectionRange(pos, pos);
     }
 
+    function normalizeMentionText(value) {
+      return safeName(value).replace(/\s+/g, "");
+    }
+
+    function detectMentions(text) {
+      const mentions = {};
+      const normalizedText = String(text || "").replace(/\s+/g, "");
+
+      for (const [uid, member] of Object.entries(state.members || {})) {
+        const name = normalizeMentionText(member?.name);
+        if (!uid || !name) continue;
+        if (normalizedText.includes(`@${name}`)) {
+          mentions[uid] = true;
+        }
+      }
+
+      return mentions;
+    }
+
+    function canDeleteMessage(message) {
+      return message.uid === player.uid || isHostUid(player.uid) || state.currentRole === "operator";
+    }
+
+    function showChatNotice(text) {
+      chatStatus.textContent = text;
+      clearTimeout(showChatNotice.timer);
+      showChatNotice.timer = setTimeout(() => {
+        chatStatus.textContent = "接続済み";
+      }, 1800);
+    }
+
     async function deleteMessage(message) {
-      if (message.uid !== player.uid) return;
+      if (!canDeleteMessage(message)) return;
 
       const ok = confirm("このメッセージを削除しますか？");
       if (!ok) return;
 
-      await remove(ref(db, messagePath(message.id)));
+      try {
+        await remove(ref(db, messagePath(message.id)));
+      } catch (error) {
+        console.error("map chat delete failed", error);
+        showChatNotice("削除に失敗しました");
+      }
     }
 
     async function reactToMessage(message, reactionKey) {
       if (!player.uid) return;
 
       const reactionPath = `${messagesPath()}/${message.id}/reactions/${reactionKey}/${player.uid}`;
-      await set(ref(db, reactionPath), true);
+      try {
+        const reactionRef = ref(db, reactionPath);
+        const existing = message?.reactions?.[reactionKey]?.[player.uid];
+        if (existing) {
+          await remove(reactionRef);
+        } else {
+          await set(reactionRef, true);
+        }
+      } catch (error) {
+        console.error("map chat reaction failed", error);
+        showChatNotice("リアクションに失敗しました");
+      }
     }
 
     async function sendReaction(emoji) {
@@ -1822,6 +1899,18 @@
       });
     }
 
+    function subscribeServerMembers() {
+      if (!serverMapMode || !serverId) return;
+
+      onValue(ref(db, `serverMembers/${serverId}`), (snapshot) => {
+        state.members = snapshot.val() || {};
+        state.currentRole = state.members[player.uid]?.role || "";
+        renderMessages();
+      }, (error) => {
+        console.error("map chat members subscribe failed", error);
+      });
+    }
+
     function subscribeRoomState() {
       const roomStateRef = ref(db, roomStatePath());
 
@@ -1861,6 +1950,9 @@
         const item = document.createElement("div");
         item.className = "message";
         item.dataset.messageId = message.id;
+        if (message?.mentions?.[player.uid]) {
+          item.classList.add("mentioned-me");
+        }
 
         if (message.replyTo) {
           const reply = document.createElement("div");
@@ -1919,11 +2011,17 @@
         reactSmileBtn.type = "button";
         reactSmileBtn.textContent = `😄 ${countReactions(message, "smile") || ""}`.trim();
         reactSmileBtn.addEventListener("click", () => reactToMessage(message, "smile"));
+        reactSmileBtn.textContent = `😄 ${countReactions(message, "😄") || ""}`.trim();
+        reactSmileBtn.classList.toggle("active", Boolean(message?.reactions?.["😄"]?.[player.uid]));
+        reactSmileBtn.onclick = () => reactToMessage(message, "😄");
 
         const reactHeartBtn = document.createElement("button");
         reactHeartBtn.type = "button";
         reactHeartBtn.textContent = `❤️ ${countReactions(message, "heart") || ""}`.trim();
         reactHeartBtn.addEventListener("click", () => reactToMessage(message, "heart"));
+        reactHeartBtn.textContent = `❤️ ${countReactions(message, "❤️") || ""}`.trim();
+        reactHeartBtn.classList.toggle("active", Boolean(message?.reactions?.["❤️"]?.[player.uid]));
+        reactHeartBtn.onclick = () => reactToMessage(message, "❤️");
 
         actions.append(mentionBtn, replyBtn, reactSmileBtn, reactHeartBtn);
 
@@ -1941,6 +2039,14 @@
           actions.append(editBtn, deleteBtn);
         }
 
+        if (message.uid !== player.uid && canDeleteMessage(message)) {
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.textContent = "削除";
+          deleteBtn.addEventListener("click", () => deleteMessage(message));
+          actions.append(deleteBtn);
+        }
+
         item.append(head, text, actions);
         chatList.appendChild(item);
       }
@@ -1955,7 +2061,13 @@
     }
 
     function countReactions(message, key) {
-      const users = message?.reactions?.[key] || {};
+      const users = { ...(message?.reactions?.[key] || {}) };
+      if (key === "😄") {
+        Object.assign(users, message?.reactions?.smile || {});
+      }
+      if (key === "❤️") {
+        Object.assign(users, message?.reactions?.heart || {});
+      }
       return Object.keys(users).length;
     }
 
@@ -2669,6 +2781,7 @@
 
       subscribePlayers();
       subscribeMessages();
+      subscribeServerMembers();
       subscribeRoomState();
       refreshSkinButtons();
       updateFlyButtonState();
