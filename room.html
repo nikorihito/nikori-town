@@ -1296,7 +1296,7 @@
         event.preventDefault();
       }
 
-      if (arrowDownHeld && key === "h" && !flightComboLocked) {
+      if ((arrowDownHeld || keys.down) && key === "h" && !flightComboLocked) {
         flightComboLocked = true;
         toggleFlying();
         event.preventDefault();
@@ -2020,7 +2020,6 @@
 
     function drawAirplane(p, sx, sy) {
       const image = images.airplane;
-      const skin = normalizeSkin(p.skin);
       const dir = normalizeDir(p.dir);
 
       let w = 240;
@@ -2054,8 +2053,6 @@
         ctx.fillStyle = "#0f172a";
         ctx.fillRect(sx - 18, sy - 135, 36, 36);
       }
-
-      drawTinyPilot(skin, sx, sy - 160);
     }
 
     function drawTinyPilot(skin, sx, sy) {

@@ -1176,7 +1176,7 @@
       let lastWrite = 0;
       const draw = async (time = performance.now()) => {
         if (state.mapRoomId !== roomId) return;
-        const speed = mapLocal.flying ? 5.0 : 2.6;
+        const speed = mapLocal.flying ? 5.2 : 2.6;
         let dx = 0, dy = 0;
         if (state.mapKeys.has('arrowleft') || state.mapKeys.has('a')) dx -= speed;
         if (state.mapKeys.has('arrowright') || state.mapKeys.has('d')) dx += speed;
@@ -1408,8 +1408,6 @@
         } else ctx.drawImage(image, x - w / 2, y - h + 18, w, h);
         ctx.restore();
       }
-      const pilot = local.skins[skin]?.front;
-      if (pilot?.complete && pilot.naturalWidth) ctx.drawImage(pilot, x - 23, y - 183, 46, 46);
     }
     function renderServerMapMessages(){
       const root = $('serverMapChatLog');
