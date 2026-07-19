@@ -211,6 +211,10 @@
     .msg-name{font-weight:950;color:#087fa8}
     .msg-meta{font-size:11px;color:var(--muted);margin-left:6px}
     .msg-text{white-space:pre-wrap;word-break:break-word;margin-top:5px;line-height:1.55}
+    .msg.mentioned{background:linear-gradient(135deg,rgba(222,247,255,.96),rgba(255,249,218,.92));border-color:rgba(53,185,232,.44)}
+    .mention{font-weight:950;color:#0e9ed0;background:rgba(53,185,232,.12);border-radius:8px;padding:0 3px}
+    .reply-preview{margin-bottom:7px;padding:8px 10px;border-left:3px solid var(--blue);border-radius:12px;background:rgba(229,250,255,.72);color:var(--muted);font-size:12px;line-height:1.45}
+    .compose-reply{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:18px;background:rgba(229,250,255,.80)}
     .msg-actions{display:flex;gap:5px;align-items:start}
     .chat-form{display:grid;grid-template-columns:1fr auto;gap:10px;padding-top:10px;border-top:1px solid var(--line)}
     .chat-form textarea{min-height:54px;max-height:160px}
@@ -223,6 +227,9 @@
     .voice-members{display:grid;gap:10px}
     .server-map-wrap{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;gap:10px;min-height:0;flex:1}
     .server-map-embed{display:grid;grid-template-rows:minmax(0,1fr);min-height:0;flex:1}
+    .server-map-lobby{display:grid;place-items:center;min-height:420px;text-align:center}
+    .server-map-lobby .info-card{max-width:460px}
+    .server-map-topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
     .server-map-frame{width:100%;height:100%;min-height:calc(100svh - 202px);border:1px solid var(--line);border-radius:24px;background:#dff9ff;box-shadow:var(--soft-shadow)}
     .server-map-stage{position:relative;align-self:start;width:100%;max-height:100%;aspect-ratio:16 / 9;border:1px solid var(--line);border-radius:24px;overflow:hidden;background:linear-gradient(135deg,#dff9ff,#e9fff8 46%,#f1edff)}
     #serverMapCanvas{display:block;width:100%;height:100%;background:transparent;outline:none}
@@ -392,6 +399,8 @@
       activeServer:null,
       activeMember:null,
       activeRoom:null,
+      replyTarget:null,
+      joinedMapRooms:{},
       rooms:{},
       members:{}
     };
@@ -421,6 +430,35 @@
     const canOperate = () => state.activeMember?.role === 'operator' || state.activeServer?.hostUid === auth.currentUser?.uid;
     const canDeleteServer = () => Boolean(auth.currentUser?.uid && state.activeServer?.hostUid === auth.currentUser.uid);
     const memberName = member => `${safeName(member?.name)}${state.activeServer?.hostUid === member?.uid ? ' 👑' : ''}${member?.role === 'operator' && state.activeServer?.hostUid !== member?.uid ? ' OP' : ''}`;
+    const mentionName = member => safeName(member?.name).replace(/\s+/g, '');
+    function detectMentions(text){
+      const mentions = {};
+      const compact = String(text || '').replace(/\s+/g, '');
+      for (const member of Object.values(state.members || {})) {
+        const name = mentionName(member);
+        if (name && compact.includes(`@${name}`)) mentions[member.uid] = true;
+      }
+      return mentions;
+    }
+    function renderMentionText(root, text){
+      const source = String(text || '');
+      const names = Object.values(state.members || {}).map(mentionName).filter(Boolean).sort((a,b) => b.length - a.length);
+      if (!names.length) {
+        root.textContent = source;
+        return;
+      }
+      const pattern = new RegExp(`@(${names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g');
+      let last = 0;
+      for (const match of source.matchAll(pattern)) {
+        if (match.index > last) root.append(document.createTextNode(source.slice(last, match.index)));
+        const span = document.createElement('span');
+        span.className = 'mention';
+        span.textContent = match[0];
+        root.append(span);
+        last = match.index + match[0].length;
+      }
+      if (last < source.length) root.append(document.createTextNode(source.slice(last)));
+    }
     const normalizeRoom = (roomId, room = {}) => ({
       ...room,
       roomId,
@@ -593,6 +631,8 @@
       state.mapLocal = null;
     }
     function closeActiveServer(){
+      const activeId = state.activeRoom?.roomId || state.activeRoom?.id;
+      if (state.activeRoom?.type === 'map' && activeId !== id) leaveServerMapRoom(state.activeRoom, false);
       setSettingsDrawer(false);
       clearServerSubscriptions();
       state.activeServer = null;
@@ -1003,6 +1043,7 @@
     function selectRoom(id){
       const room = state.rooms?.[id];
       if (!room) return;
+      if (state.activeRoom?.type === 'map') leaveServerMapRoom(state.activeRoom, false);
       state.activeRoom = room;
       renderRooms();
       if (state.messagesUnsub) { state.messagesUnsub(); state.messagesUnsub = null; }
@@ -1028,10 +1069,41 @@
       $('activeRoomDescription').textContent = description;
       $('serverRoomContent').innerHTML = '<div class="info-card">ルームが選択されていません。</div>';
     }
+    const serverMapJoinKey = room => `${getServerId(state.activeServer)}:${room?.roomId || room?.id || ''}`;
+    async function leaveServerMapRoom(room, rerender = true){
+      const user = auth.currentUser;
+      const serverId = getServerId(state.activeServer);
+      const roomId = room?.roomId || room?.id;
+      if (!user || !serverId || !roomId) return;
+      delete state.joinedMapRooms[serverMapJoinKey(room)];
+      await remove(ref(db, `serverMapPlayers/${serverId}/${roomId}/${user.uid}`)).catch(error => {
+        console.error('leave server map room failed', { serverId, roomId, uid:user.uid }, error);
+      });
+      if (rerender && state.activeRoom && (state.activeRoom.roomId || state.activeRoom.id) === roomId) renderMapRoom(room);
+    }
+    function enterServerMapRoom(room){
+      state.joinedMapRooms[serverMapJoinKey(room)] = true;
+      renderMapRoom(room);
+    }
     function renderMapRoom(room){
       const serverId = getServerId(state.activeServer);
       const roomId = room.roomId || room.id;
       state.mapRoomId = roomId;
+      const joined = Boolean(state.joinedMapRooms[serverMapJoinKey(room)]);
+      if (!joined) {
+        $('serverRoomContent').innerHTML = `
+          <div class="server-map-lobby">
+            <div class="info-card">
+              <div class="section-title">🌍 ${safeText(room.name)}</div>
+              <div class="hint">このマップルームに入室すると、あなたのプレイヤーがマップ上に表示されます。</div>
+              <div class="row" style="justify-content:center;margin-top:14px">
+                <button id="serverMapEnterBtn" type="button">このマップルームに入室</button>
+              </div>
+            </div>
+          </div>`;
+        $('serverMapEnterBtn').onclick = () => enterServerMapRoom(room);
+        return;
+      }
       const mapId = room.mapId || state.mapState?.mapId || 'lakeside_park';
       const floorId = room.floorId || state.mapState?.floorId || '';
       const mapParams = new URLSearchParams({
@@ -1045,6 +1117,10 @@
       if (floorId) mapParams.set('floor', floorId);
       $('serverRoomContent').innerHTML = `
         <div class="server-map-embed">
+          <div class="server-map-topbar">
+            <div class="hint">入室中: ${safeText(room.name)}</div>
+            <button id="serverMapLeaveBtn" class="secondary small" type="button">退出</button>
+          </div>
           <iframe
             class="server-map-frame"
             title="${safeText(room.name)}"
@@ -1052,6 +1128,7 @@
             allow="clipboard-write; microphone; camera; display-capture"
           ></iframe>
         </div>`;
+      $('serverMapLeaveBtn').onclick = () => leaveServerMapRoom(room, true);
       return;
       $('serverRoomContent').innerHTML = `
         <div class="server-map-wrap">
@@ -1425,7 +1502,8 @@
       });
     }
     function renderChat(room){
-      $('serverRoomContent').innerHTML = '<div id="chatLog" class="chat"></div><form id="chatForm" class="chat-form"><textarea id="chatInput" maxlength="500" placeholder="メッセージを入力。Enterで送信、Shift+Enterで改行できます。" autocomplete="off"></textarea><button type="submit">送信</button></form>';
+      state.replyTarget = null;
+      $('serverRoomContent').innerHTML = '<div id="chatLog" class="chat"></div><div id="replyComposer" class="compose-reply" hidden><div><strong id="replyComposerTitle"></strong><div id="replyComposerText" class="hint"></div></div><button id="replyCancelBtn" class="secondary small" type="button">キャンセル</button></div><form id="chatForm" class="chat-form"><textarea id="chatInput" maxlength="500" placeholder="メッセージを入力。Enterで送信、Shift+Enterで改行できます。" autocomplete="off"></textarea><button type="submit">送信</button></form>';
       const serverId = getServerId(state.activeServer);
       const messagesRef = ref(db, `serverMessages/${serverId}/${room.roomId || room.id}`);
       const callback = snap => {
@@ -1444,6 +1522,7 @@
       state.messagesUnsub = () => off(messagesRef, 'value', callback);
       const form = $('chatForm');
       const input = $('chatInput');
+      $('replyCancelBtn').onclick = () => clearReplyTarget();
       input.addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
@@ -1458,8 +1537,20 @@
         const messageRef = push(messagesRef);
         const now = Date.now();
         const messageId = messageRef.key;
+        const mentions = detectMentions(text);
+        const payload = { messageId, id:messageId, uid:auth.currentUser.uid, name:userName(auth.currentUser), role:state.activeMember?.role || 'member', text, mentions, createdAt:now, updatedAt:now, edited:false };
+        if (state.replyTarget) {
+          payload.replyTo = {
+            messageId:state.replyTarget.messageId,
+            uid:state.replyTarget.uid,
+            name:state.replyTarget.name,
+            text:String(state.replyTarget.text || '').slice(0, 120)
+          };
+        }
         try {
-          await set(messageRef, { messageId, id:messageId, uid:auth.currentUser.uid, name:userName(auth.currentUser), role:state.activeMember?.role || 'member', text, createdAt:now, updatedAt:now, edited:false });
+          await set(messageRef, payload);
+          if (Object.keys(mentions).some(uid => uid === auth.currentUser?.uid)) toast('あなた宛てのメンションがあります');
+          clearReplyTarget();
         } catch (error) {
           console.error('send server message failed', error);
           setStatus(describeError(error, 'メッセージ送信に失敗しました。'));
@@ -1470,13 +1561,24 @@
       const member = state.members[msg.uid] || { uid:msg.uid, name:msg.name, role:msg.role };
       const row = document.createElement('div');
       row.className = 'msg';
+      row.classList.toggle('mentioned', Boolean(msg.mentions?.[auth.currentUser?.uid]));
       const time = new Date(Number(msg.createdAt) || Date.now()).toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
-      row.innerHTML = `<div><div><span class="msg-name">${safeText(memberName(member))}</span><span class="msg-meta">${time}${msg.edited ? ' (編集済み)' : ''}</span></div><div class="msg-text"></div></div>`;
-      row.querySelector('.msg-text').textContent = String(msg.text || '');
+      row.innerHTML = `<div><div class="reply-slot"></div><div><span class="msg-name">${safeText(memberName(member))}</span><span class="msg-meta">${time}${msg.edited ? ' (編集済み)' : ''}</span></div><div class="msg-text"></div></div>`;
+      const replySlot = row.querySelector('.reply-slot');
+      if (msg.replyTo) {
+        replySlot.innerHTML = `<div class="reply-preview">↪ ${safeText(msg.replyTo.name || 'user')}: ${safeText(String(msg.replyTo.text || '').slice(0, 80))}</div>`;
+      }
+      renderMentionText(row.querySelector('.msg-text'), msg.text || '');
       const actions = document.createElement('div');
       actions.className = 'msg-actions';
       const own = msg.uid === auth.currentUser?.uid;
       const moderator = canOperate();
+      const reply = document.createElement('button');
+      reply.type = 'button';
+      reply.className = 'secondary small';
+      reply.textContent = '返信';
+      reply.onclick = () => setReplyTarget(msg);
+      actions.appendChild(reply);
       if (own) {
         const edit = document.createElement('button');
         edit.type = 'button';
@@ -1495,6 +1597,23 @@
       }
       row.appendChild(actions);
       return row;
+    }
+    function setReplyTarget(msg){
+      state.replyTarget = {
+        messageId:msg.messageId || msg.id,
+        uid:msg.uid || '',
+        name:safeName(msg.name || 'user'),
+        text:String(msg.text || '')
+      };
+      $('replyComposer').hidden = false;
+      $('replyComposerTitle').textContent = `${state.replyTarget.name} さんに返信中`;
+      $('replyComposerText').textContent = state.replyTarget.text.slice(0, 90);
+      $('chatInput').focus();
+    }
+    function clearReplyTarget(){
+      state.replyTarget = null;
+      const composer = $('replyComposer');
+      if (composer) composer.hidden = true;
     }
     async function editMessage(room, msg){
       if (msg.uid !== auth.currentUser?.uid) return setStatus('メッセージ編集は投稿者本人のみ可能です。');
@@ -1745,6 +1864,9 @@
     $('drawerBackdrop').onclick = () => setSettingsDrawer(false);
     $('serverJoinCode').addEventListener('input', event => event.target.value = safeCode(event.target.value));
     $('serverJoinCode').addEventListener('keydown', event => { if (event.key === 'Enter') joinServer(); });
+    window.addEventListener('beforeunload', () => {
+      if (state.activeRoom?.type === 'map') leaveServerMapRoom(state.activeRoom, false);
+    });
     onAuthStateChanged(auth, showForUser);
   </script>
 </body>

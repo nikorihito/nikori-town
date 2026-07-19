@@ -840,8 +840,51 @@
 
     function setPlayerToSpawn(spread = 80) {
       const spawn = getActiveMapData().spawn;
-      player.x = spawn.x + Math.random() * spread;
-      player.y = spawn.y + Math.random() * spread;
+      const safe = findSafeSpawn(spawn, spread);
+      player.x = safe.x;
+      player.y = safe.y;
+    }
+
+    function findSafeSpawn(preferredSpawn, spread = 80) {
+      const base = preferredSpawn || getActiveMapData().spawn || { x: state.worldW / 2, y: state.worldH / 2 };
+      const candidates = [];
+
+      candidates.push({ x: base.x, y: base.y });
+      for (let i = 0; i < 12; i++) {
+        candidates.push({
+          x: base.x + (Math.random() - 0.5) * spread,
+          y: base.y + (Math.random() - 0.5) * spread
+        });
+      }
+
+      for (let radius = 40; radius <= 520; radius += 40) {
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+          candidates.push({
+            x: base.x + Math.cos(angle) * radius,
+            y: base.y + Math.sin(angle) * radius
+          });
+        }
+      }
+
+      candidates.push({ x: state.worldW / 2, y: state.worldH / 2 });
+
+      for (const point of candidates) {
+        const x = clamp(point.x, 32, state.worldW - 32);
+        const y = clamp(point.y, 64, state.worldH - 32);
+        if (canStandAt(x, y) && !isInBehindArea(x, y) && !isInMeetingArea(x, y)) {
+          return { x, y };
+        }
+      }
+
+      for (const point of candidates) {
+        const x = clamp(point.x, 32, state.worldW - 32);
+        const y = clamp(point.y, 64, state.worldH - 32);
+        if (canStandAt(x, y)) {
+          return { x, y };
+        }
+      }
+
+      return { x: clamp(base.x, 32, state.worldW - 32), y: clamp(base.y, 64, state.worldH - 32) };
     }
 
     roomLabel.textContent = room;
@@ -983,6 +1026,10 @@
     images.collision.onload = () => {
       state.collisionLoaded = true;
       resetMaskCache();
+      if (!canStandAt(player.x, player.y) || isInBehindArea(player.x, player.y) || isInMeetingArea(player.x, player.y)) {
+        setPlayerToSpawn();
+        if (player.uid) pushPlayer(true);
+      }
     };
 
     images.collision.onerror = () => {
