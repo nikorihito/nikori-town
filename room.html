@@ -434,6 +434,7 @@
       gap: 9px;
       flex-wrap: wrap;
       margin-top: 15px;
+      min-height: 42px;
     }
 
     .mobile-pad {
@@ -618,7 +619,6 @@
 
       <div class="menu-actions">
         <button id="closeMenuBtn" class="btn secondary" type="button">閉じる</button>
-        <button id="leaveBtn" class="btn danger" type="button">ホームへ戻る</button>
       </div>
     </section>
   </div>
@@ -680,7 +680,6 @@
     const menuBtn = document.getElementById("menuBtn");
     const menuBackdrop = document.getElementById("menuBackdrop");
     const closeMenuBtn = document.getElementById("closeMenuBtn");
-    const leaveBtn = document.getElementById("leaveBtn");
     const copyRoomBtn = document.getElementById("copyRoomBtn");
     const roomShareInput = document.getElementById("roomShareInput");
     const floorPicker = document.getElementById("floorPicker");
@@ -1401,7 +1400,6 @@
 
     menuBtn.addEventListener("click", openMenu);
     closeMenuBtn.addEventListener("click", closeMenu);
-    leaveBtn.addEventListener("click", leaveRoom);
     copyRoomBtn.addEventListener("click", copyRoomName);
     flyBtn.addEventListener("click", toggleFlying);
 
