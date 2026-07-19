@@ -372,6 +372,8 @@
       const path = `serverRooms/${serverId}/${roomId}`;
       console.log("CREATE ROOM activeServer:", activeServer);
       console.log("CREATE ROOM serverId:", serverId);
+      console.log("CREATE ROOM path:", path);
+      console.log("CREATE ROOM data:", roomData);
       console.log("CREATE ROOM roomRef path:", path);
       console.log("CREATE ROOM roomData:", roomData);
       console.log("create server room path:", path);
@@ -523,20 +525,32 @@
           get(ref(db, `serverMembers/${serverId}`)).catch(error => { console.error('serverMembers read before delete failed', error); return null; }),
           get(dbQuery(ref(db, 'serverCodes'), orderByChild('serverId'), equalTo(serverId))).catch(error => { console.error('serverCodes read before delete failed', error); return null; })
         ]);
-        const updates = {
-          [`servers/${serverId}`]: null,
-          [`serverMembers/${serverId}`]: null,
-          [`serverRooms/${serverId}`]: null,
-          [`serverMessages/${serverId}`]: null,
-          [`serverVoiceState/${serverId}`]: null,
-          [`serverMapRooms/${serverId}`]: null
-        };
-        for (const uid of Object.keys(membersSnap?.val() || {})) updates[`userServers/${uid}/${serverId}`] = null;
-        if (latest.joinCode) updates[`serverCodes/${latest.joinCode}`] = null;
-        for (const code of Object.keys(codeSnap?.val() || {})) updates[`serverCodes/${code}`] = null;
-        console.log("DELETE SERVER paths:", Object.keys(updates));
-        console.log("DELETE SERVER update payload:", updates);
-        await writeStep('server delete update', 'server delete multi-path update', () => update(ref(db), updates));
+        const deletePaths = [
+          `serverRooms/${serverId}`,
+          `serverMessages/${serverId}`,
+          `serverVoiceState/${serverId}`,
+          `serverMapRooms/${serverId}`,
+          `serverMembers/${serverId}`,
+          ...Object.keys(membersSnap?.val() || {}).map(uid => `userServers/${uid}/${serverId}`),
+          ...(latest.joinCode ? [`serverCodes/${latest.joinCode}`] : []),
+          ...Object.keys(codeSnap?.val() || {}).map(code => `serverCodes/${code}`),
+          `servers/${serverId}`
+        ];
+        console.log("DELETE SERVER paths:", deletePaths);
+        const deleteResults = [];
+        for (const path of [...new Set(deletePaths)]) {
+          try {
+            await remove(ref(db, path));
+            const readback = (await get(ref(db, path))).val();
+            console.log("DELETE SERVER removed:", path, readback);
+            deleteResults.push({ path, ok:true, readback });
+          } catch (error) {
+            console.error("DELETE SERVER path failed:", path, error);
+            deleteResults.push({ path, ok:false, code:error?.code, message:error?.message });
+          }
+        }
+        const hardFailures = deleteResults.filter(result => !result.ok && !result.path.startsWith('userServers/'));
+        if (hardFailures.length) throw new Error(`DELETE_SERVER_PARTIAL_FAILURE: ${hardFailures.map(item => `${item.path}:${item.code || item.message}`).join(', ')}`);
         const deleteReadback = await Promise.all([
           get(ref(db, `servers/${serverId}`)).then(snap => ['servers', snap.val()]).catch(error => ['servers error', error?.message || error]),
           get(ref(db, `serverMembers/${serverId}`)).then(snap => ['serverMembers', snap.val()]).catch(error => ['serverMembers error', error?.message || error]),
@@ -548,7 +562,8 @@
         console.log("DELETE SERVER READBACK:", Object.fromEntries(deleteReadback));
         closeActiveServer();
         subscribeUserServers(user);
-        setStatus('サーバーを削除しました。');
+        const skipped = deleteResults.filter(result => !result.ok);
+        setStatus(skipped.length ? `サーバーを削除しました。一部メンバー履歴の削除に失敗: ${skipped.map(item => item.path).join(', ')}` : 'サーバーを削除しました。');
       } catch (error) {
         console.error("DELETE SERVER failed:", error);
         console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
