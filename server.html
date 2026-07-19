@@ -222,15 +222,30 @@
     .member-row{display:grid;gap:6px;padding:9px 0;border-bottom:1px solid rgba(79,137,168,.14);font-size:13px}
     .member-role{font-size:11px;color:var(--muted)}
     .info-card{padding:13px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.68)}
-    .voice-room{display:grid;gap:16px}
-    .voice-controls{display:flex;gap:10px;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.70)}
+    .voice-room{display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:14px;min-height:calc(100svh - 220px)}
+    .voice-hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.70)}
+    .voice-stage{position:relative;min-height:min(54svh,560px);border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,#effbff,#ffffff 48%,#f2efff);box-shadow:var(--soft-shadow);overflow:hidden;display:grid;place-items:center}
+    .voice-stage video{width:100%;height:100%;min-height:min(54svh,560px);object-fit:contain;background:#0f2432}
+    .voice-stage-empty{display:grid;gap:10px;place-items:center;text-align:center;color:var(--muted);font-weight:850;padding:28px}
+    .voice-avatar{width:92px;height:92px;border-radius:30px;display:grid;place-items:center;background:linear-gradient(135deg,#dff9ff,#e9fff8);border:1px solid rgba(255,255,255,.8);font-size:42px;box-shadow:var(--soft-shadow)}
+    .voice-media-label{position:absolute;left:16px;bottom:16px;padding:8px 12px;border-radius:999px;background:rgba(18,48,71,.70);color:white;font-weight:900}
+    .voice-expand{position:absolute;right:14px;top:14px;min-height:34px;padding:7px 11px;border-radius:999px;background:rgba(255,255,255,.86);border:1px solid var(--line);font-weight:900;color:var(--text)}
+    .voice-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:center;padding:12px;border:1px solid var(--line);border-radius:24px;background:rgba(255,255,255,.78);box-shadow:var(--soft-shadow)}
+    .voice-controls button{border-radius:999px;min-height:44px;padding-inline:16px}
+    .voice-controls button.active{background:linear-gradient(135deg,var(--blue),var(--mint));color:white;border-color:rgba(255,255,255,.82);box-shadow:0 12px 26px rgba(53,185,232,.18)}
+    .voice-controls .danger{background:var(--danger);color:white}
     .voice-members{display:grid;gap:10px}
-    .voice-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-    .voice-preview{min-height:170px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.72);overflow:hidden;display:grid;place-items:center;position:relative}
-    .voice-preview video{width:100%;height:100%;min-height:170px;object-fit:cover;background:#123047}
+    .voice-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    .voice-preview{min-height:150px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.72);overflow:hidden;display:grid;place-items:center;position:relative}
+    .voice-preview video{width:100%;height:100%;min-height:150px;object-fit:cover;background:#123047}
     .voice-preview .empty{padding:18px;text-align:center;color:var(--muted);font-weight:850}
     .voice-error{padding:10px 12px;border:1px solid rgba(245,111,127,.34);border-radius:16px;background:rgba(255,235,238,.82);color:#9f2434;font-weight:850}
     .voice-error[hidden]{display:none}
+    .voice-lightbox{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:26px;background:rgba(8,22,34,.72);backdrop-filter:blur(10px)}
+    .voice-lightbox[hidden]{display:none}
+    .voice-lightbox-card{position:relative;width:min(1180px,96vw);height:min(720px,88svh);border-radius:28px;overflow:hidden;background:#061521;box-shadow:0 32px 90px rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.22)}
+    .voice-lightbox-card video{width:100%;height:100%;object-fit:contain;background:#061521}
+    .voice-lightbox-close{position:absolute;right:14px;top:14px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid var(--line);font-weight:950;color:var(--text)}
     .server-map-wrap{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;gap:10px;min-height:0;flex:1}
     .server-map-embed{display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;min-height:0;flex:1}
     .server-map-lobby{display:grid;place-items:center;min-height:420px;text-align:center}
@@ -403,6 +418,7 @@
       mapState:{},
       mapLocal:null,
       voiceLocal:null,
+      voiceKeyHandler:null,
       activeServer:null,
       activeMember:null,
       activeRoom:null,
@@ -1716,6 +1732,16 @@
         if (!stream) continue;
         for (const track of stream.getTracks()) track.stop();
       }
+      for (const id of ['voiceCameraPreview','voiceScreenPreview','voiceMainPreview','voiceLightboxVideo']) {
+        const video = $(id);
+        if (video) video.srcObject = null;
+      }
+      const lightbox = $('voiceLightbox');
+      if (lightbox) lightbox.hidden = true;
+      if (state.voiceKeyHandler) {
+        document.removeEventListener('keydown', state.voiceKeyHandler);
+        state.voiceKeyHandler = null;
+      }
       const voicePath = local.voicePath;
       const uid = auth.currentUser?.uid;
       state.voiceLocal = null;
@@ -1730,23 +1756,40 @@
       stopVoiceTracks({ removeState:false });
       $('serverRoomContent').innerHTML = `
         <div class="voice-room">
-          <div class="info-card">
-            <div class="section-title">🔊 ボイスルーム</div>
-            <div class="hint">入室後に、マイク・カメラ・画面共有を個別にON/OFFできます。</div>
+          <div class="voice-hero">
+            <div>
+              <div class="section-title">🔊 ${safeText(room.name || 'ボイスルーム')}</div>
+              <div id="voiceStatusLine" class="hint">入室後に、マイク・カメラ・画面共有を個別にON/OFFできます。</div>
+            </div>
+            <button id="voiceJoinBtn" type="button">入室</button>
           </div>
           <div id="voiceError" class="voice-error" hidden></div>
+          <div class="voice-stage">
+            <video id="voiceMainPreview" autoplay playsinline muted hidden></video>
+            <div id="voiceMainEmpty" class="voice-stage-empty">
+              <div class="voice-avatar">🔊</div>
+              <div>カメラまたは画面共有をONにすると、ここに大きく表示されます。</div>
+            </div>
+            <div id="voiceMainLabel" class="voice-media-label" hidden></div>
+            <button id="voiceMainExpandBtn" class="voice-expand" type="button" hidden>拡大</button>
+          </div>
+          <div class="voice-preview-grid">
+            <div class="voice-preview"><video id="voiceCameraPreview" autoplay playsinline muted hidden></video><div id="voiceCameraEmpty" class="empty">カメラOFF</div><button id="voiceCameraExpandBtn" class="voice-expand" type="button" hidden>拡大</button></div>
+            <div class="voice-preview"><video id="voiceScreenPreview" autoplay playsinline muted hidden></video><div id="voiceScreenEmpty" class="empty">画面共有OFF</div><button id="voiceScreenExpandBtn" class="voice-expand" type="button" hidden>拡大</button></div>
+          </div>
           <div class="voice-controls">
-            <button id="voiceJoinBtn" type="button">入室</button>
             <button id="voiceMicBtn" class="secondary" type="button" disabled>マイクON</button>
             <button id="voiceCameraBtn" class="secondary" type="button" disabled>カメラON</button>
             <button id="voiceScreenBtn" class="secondary" type="button" disabled>画面共有ON</button>
-            <button id="voiceLeaveBtn" class="secondary" type="button" disabled>退出</button>
-          </div>
-          <div class="voice-preview-grid">
-            <div class="voice-preview"><video id="voiceCameraPreview" autoplay playsinline muted hidden></video><div id="voiceCameraEmpty" class="empty">カメラOFF</div></div>
-            <div class="voice-preview"><video id="voiceScreenPreview" autoplay playsinline muted hidden></video><div id="voiceScreenEmpty" class="empty">画面共有OFF</div></div>
+            <button id="voiceLeaveBtn" class="danger" type="button" disabled>退出</button>
           </div>
           <div id="voiceMembers" class="voice-members"></div>
+        </div>
+        <div id="voiceLightbox" class="voice-lightbox" hidden>
+          <div class="voice-lightbox-card">
+            <video id="voiceLightboxVideo" autoplay playsinline muted></video>
+            <button id="voiceLightboxCloseBtn" class="voice-lightbox-close" type="button">閉じる</button>
+          </div>
         </div>`;
       const serverId = getServerId(state.activeServer);
       const roomId = room.roomId || room.id;
@@ -1766,12 +1809,39 @@
         updatedAt:Date.now(),
         ...patch
       });
+      let expandedKind = "";
+      const closeVoiceLightbox = () => {
+        expandedKind = "";
+        const box = $('voiceLightbox');
+        const video = $('voiceLightboxVideo');
+        if (video) video.srcObject = null;
+        if (box) box.hidden = true;
+      };
+      const openVoiceLightbox = kind => {
+        const local = state.voiceLocal;
+        const stream = kind === 'screen' ? local?.screenStream : local?.cameraStream;
+        const track = kind === 'screen' ? local?.screenTrack : local?.cameraTrack;
+        if (!stream || !track || track.readyState !== 'live' || (kind === 'camera' && !track.enabled)) return;
+        expandedKind = kind;
+        $('voiceLightboxVideo').srcObject = stream;
+        $('voiceLightbox').hidden = false;
+      };
+      if (state.voiceKeyHandler) document.removeEventListener('keydown', state.voiceKeyHandler);
+      state.voiceKeyHandler = event => {
+        if (event.key === 'Escape') closeVoiceLightbox();
+      };
+      document.addEventListener('keydown', state.voiceKeyHandler);
+      $('voiceLightboxCloseBtn').onclick = closeVoiceLightbox;
+      $('voiceLightbox').onclick = event => {
+        if (event.target === $('voiceLightbox')) closeVoiceLightbox();
+      };
       const refreshVoiceUi = () => {
         const local = state.voiceLocal;
         const joined = Boolean(local?.joined);
         const micOn = Boolean(local?.micTrack && local.micTrack.readyState === 'live' && local.micTrack.enabled);
         const camOn = Boolean(local?.cameraTrack && local.cameraTrack.readyState === 'live' && local.cameraTrack.enabled);
         const screenOn = Boolean(local?.screenTrack && local.screenTrack.readyState === 'live');
+        const peopleCount = Object.keys(state.voicePeople || {}).length;
         $('voiceJoinBtn').disabled = joined;
         $('voiceMicBtn').disabled = !joined;
         $('voiceCameraBtn').disabled = !joined;
@@ -1780,17 +1850,61 @@
         $('voiceMicBtn').textContent = micOn ? 'マイクOFF' : 'マイクON';
         $('voiceCameraBtn').textContent = camOn ? 'カメラOFF' : 'カメラON';
         $('voiceScreenBtn').textContent = screenOn ? '画面共有OFF' : '画面共有ON';
+        $('voiceMicBtn').classList.toggle('active', micOn);
+        $('voiceCameraBtn').classList.toggle('active', camOn);
+        $('voiceScreenBtn').classList.toggle('active', screenOn);
         const cameraVideo = $('voiceCameraPreview');
         const cameraEmpty = $('voiceCameraEmpty');
         const screenVideo = $('voiceScreenPreview');
         const screenEmpty = $('voiceScreenEmpty');
+        const mainVideo = $('voiceMainPreview');
+        const mainEmpty = $('voiceMainEmpty');
+        const mainLabel = $('voiceMainLabel');
+        const mainExpand = $('voiceMainExpandBtn');
+        const cameraExpand = $('voiceCameraExpandBtn');
+        const screenExpand = $('voiceScreenExpandBtn');
+        if ($('voiceStatusLine')) {
+          $('voiceStatusLine').textContent = `${joined ? '接続中' : '未入室'} / 参加者: ${peopleCount} / mic:${micOn ? 'on' : 'off'} / cam:${camOn ? 'on' : 'off'} / screen:${screenOn ? 'on' : 'off'}`;
+        }
         if (cameraVideo && cameraEmpty) {
+          if (local?.cameraStream) cameraVideo.srcObject = local.cameraStream;
           cameraVideo.hidden = !camOn;
           cameraEmpty.hidden = camOn;
         }
         if (screenVideo && screenEmpty) {
+          if (local?.screenStream) screenVideo.srcObject = local.screenStream;
           screenVideo.hidden = !screenOn;
           screenEmpty.hidden = screenOn;
+        }
+        if (cameraExpand) cameraExpand.hidden = !camOn;
+        if (screenExpand) screenExpand.hidden = !screenOn;
+        if (cameraExpand) cameraExpand.onclick = () => openVoiceLightbox('camera');
+        if (screenExpand) screenExpand.onclick = () => openVoiceLightbox('screen');
+        if (screenOn) {
+          mainVideo.srcObject = local.screenStream;
+          mainVideo.hidden = false;
+          mainEmpty.hidden = true;
+          mainLabel.hidden = false;
+          mainLabel.textContent = '画面共有';
+          mainExpand.hidden = false;
+          mainExpand.onclick = () => openVoiceLightbox('screen');
+        } else if (camOn) {
+          mainVideo.srcObject = local.cameraStream;
+          mainVideo.hidden = false;
+          mainEmpty.hidden = true;
+          mainLabel.hidden = false;
+          mainLabel.textContent = 'カメラ';
+          mainExpand.hidden = false;
+          mainExpand.onclick = () => openVoiceLightbox('camera');
+        } else {
+          mainVideo.srcObject = null;
+          mainVideo.hidden = true;
+          mainEmpty.hidden = false;
+          mainLabel.hidden = true;
+          mainExpand.hidden = true;
+        }
+        if ((expandedKind === 'camera' && !camOn) || (expandedKind === 'screen' && !screenOn)) {
+          closeVoiceLightbox();
         }
       };
       const ensureJoined = async () => {
@@ -1884,7 +1998,7 @@
             $('voiceScreenPreview').srcObject = null;
             await updateVoice({ screenSharing:false });
           } else {
-            local.screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true });
+            local.screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:false });
             local.screenTrack = local.screenStream.getVideoTracks()[0];
             $('voiceScreenPreview').srcObject = local.screenStream;
             local.screenTrack.onended = async () => {
@@ -1922,7 +2036,9 @@
         const root = $('voiceMembers');
         if (!root) return;
         root.innerHTML = '';
-        const people = Object.values(snap.val() || {});
+        state.voicePeople = snap.val() || {};
+        const people = Object.values(state.voicePeople);
+        refreshVoiceUi();
         if (!people.length) root.innerHTML = '<div class="empty">まだ誰も入室していません。</div>';
         for (const item of people) {
           const row = document.createElement('div');
