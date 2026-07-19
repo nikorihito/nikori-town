@@ -14,7 +14,7 @@
     .server-actions{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:16px}.action-card{border:1px solid rgba(148,163,184,.24);border-radius:16px;background:rgba(2,6,23,.25);padding:14px;display:grid;gap:12px}.action-card h2{font-size:16px;margin:0}.action-card button{justify-self:end;min-width:112px}.status{min-height:22px;color:#a5f3fc;font-size:13px;font-weight:700;margin:8px 0 0}
     .server-list{display:grid;gap:10px;margin-top:10px}.server-card{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:16px;background:rgba(15,23,42,.62)}.server-icon{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:#0f172a;border:1px solid rgba(148,163,184,.24);font-size:24px}.server-name{font-weight:900}.server-host{font-size:12px;color:var(--muted);margin-top:3px}.empty{color:var(--muted);font-size:13px;line-height:1.7}
     .server-app{min-height:560px;display:grid;grid-template-columns:245px 1fr 210px;border:1px solid rgba(148,163,184,.22);border-radius:18px;overflow:hidden;background:rgba(2,6,23,.22)}.server-app[hidden]{display:none}.sidebar{background:rgba(15,23,42,.82);border-right:1px solid rgba(148,163,184,.20);padding:12px}.server-head{display:flex;gap:9px;align-items:center;margin:12px 0}.room-group{margin:14px 0}.room-group-title{font-size:11px;color:var(--muted);font-weight:900;letter-spacing:.08em;margin-bottom:6px}.room-button{width:100%;display:block;text-align:left;margin:4px 0;padding:8px 9px;border-radius:9px;background:transparent;border:0;color:#cbd5e1}.room-button.active{background:rgba(34,211,238,.16);color:#e0f2fe}.room-create{width:100%;margin:5px 0;padding:8px 9px;font-size:12px;background:#1e293b;color:var(--text);border:1px solid var(--border)}
-    .main{padding:14px;min-width:0}.right{padding:12px;border-left:1px solid rgba(148,163,184,.20);background:rgba(15,23,42,.42)}.section-title{font-weight:900;margin:0 0 10px}.chat{height:340px;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:10px;background:rgba(2,6,23,.22);margin-bottom:10px}.msg{margin:0 0 9px;line-height:1.45}.msg-name{font-weight:900;color:#a5f3fc}.msg-meta{font-size:11px;color:var(--muted);margin-left:4px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.chat-form input{flex:1;min-width:180px}.settings{margin-top:12px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)}.member-row{display:grid;gap:6px;padding:7px 0;border-bottom:1px solid rgba(148,163,184,.12);font-size:12px}
+    .main{padding:14px;min-width:0}.right{padding:12px;border-left:1px solid rgba(148,163,184,.20);background:rgba(15,23,42,.42)}.section-title{font-weight:900;margin:0 0 10px}.chat{height:340px;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:10px;background:rgba(2,6,23,.22);margin-bottom:10px}.msg{margin:0 0 9px;line-height:1.45}.msg-name{font-weight:900;color:#a5f3fc}.msg-meta{font-size:11px;color:var(--muted);margin-left:4px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.chat-form input{flex:1;min-width:180px}.settings{margin-top:12px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)}.member-row{display:grid;gap:6px;padding:7px 0;border-bottom:1px solid rgba(148,163,184,.12);font-size:12px}.debug-panel{margin-top:14px;border:1px solid rgba(34,211,238,.45);border-radius:14px;background:rgba(2,6,23,.72);padding:12px}.debug-panel pre{white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;margin:0;color:#bae6fd;font-size:11px;line-height:1.45}
     @media(max-width:860px){body{padding:12px}.server-actions{grid-template-columns:1fr}.server-app{grid-template-columns:1fr}.sidebar,.right{border:0}.right{border-top:1px solid rgba(148,163,184,.20)}.server-card{grid-template-columns:auto 1fr}.server-card button{grid-column:1 / -1}.action-card button{justify-self:stretch}}
   </style>
 </head>
@@ -62,6 +62,10 @@
         <div id="serverSettings" class="settings" hidden></div>
       </aside>
     </section>
+    <section class="debug-panel">
+      <div class="section-title">診断パネル</div>
+      <pre id="diagnosticPanel">初期化中...</pre>
+    </section>
   </main>
 
   <script type="module">
@@ -86,6 +90,39 @@
     const db = getDatabase(app, firebaseConfig.databaseURL);
     const $ = id => document.getElementById(id);
     const state = { listUnsub:null, roomsUnsub:null, membersUnsub:null, messagesUnsub:null, voiceUnsub:null, activeServer:null, activeMember:null, activeRoom:null, rooms:{}, members:{} };
+    const diagnostics = {
+      clicked:null,
+      authUid:null,
+      activeServer:null,
+      activeServerServerId:null,
+      activeServerId:null,
+      serverId:null,
+      createPath:null,
+      listenPath:null,
+      roomData:null,
+      roomSavedReadback:null,
+      serverRoomsSnapshot:null,
+      errorCode:null,
+      errorMessage:null,
+      deleteServerId:null,
+      deleteHostUid:null,
+      deleteCurrentUid:null,
+      deletePaths:null,
+      deleteResults:null,
+      updatedAt:null
+    };
+    function updateDiagnostics(patch = {}){
+      Object.assign(diagnostics, patch, {
+        authUid:auth.currentUser?.uid || null,
+        activeServer:state.activeServer || null,
+        activeServerServerId:state.activeServer?.serverId || null,
+        activeServerId:state.activeServer?.id || null,
+        serverId:(patch.serverId ?? getServerId(state.activeServer)) || null,
+        updatedAt:new Date().toLocaleString('ja-JP')
+      });
+      const panel = $('diagnosticPanel');
+      if (panel) panel.textContent = JSON.stringify(diagnostics, null, 2);
+    }
 
     const safeName = value => String(value || '').trim().slice(0, 16) || 'ゲスト';
     const userName = user => safeName(user?.displayName || 'Googleユーザー');
@@ -128,6 +165,7 @@
       state.rooms = {}; state.members = {};
       $('serverApp').hidden = true;
       $('serverHome').hidden = !isGoogleUser(auth.currentUser);
+      updateDiagnostics({ clicked:'closeActiveServer', serverId:null, listenPath:null });
     }
     async function findServerByJoinCode(code){
       const codeSnap = await get(ref(db, `serverCodes/${code}`)).catch(error => {
@@ -282,6 +320,7 @@
       closeActiveServer();
       state.activeServer = { ...server, serverId, id:serverId };
       state.activeMember = member;
+      updateDiagnostics({ clicked:'openServer', serverId, listenPath:`serverRooms/${serverId}` });
       $('serverHome').hidden = true;
       $('serverApp').hidden = false;
       $('activeServerIcon').textContent = server.icon || '🌐';
@@ -295,11 +334,13 @@
     }
     function subscribeRooms(serverId){
       const roomsRef = ref(db, `serverRooms/${serverId}`);
+      updateDiagnostics({ listenPath:`serverRooms/${serverId}`, serverId });
       console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
       const callback = snap => {
         console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
         console.log("LISTEN serverRooms snapshot:", snap.val());
         console.log("serverRooms snapshot:", snap.val());
+        updateDiagnostics({ listenPath:`serverRooms/${serverId}`, serverId, serverRoomsSnapshot:snap.val(), errorCode:null, errorMessage:null });
         state.rooms = Object.fromEntries(Object.entries(snap.val() || {}).map(([roomId, room]) => [roomId, normalizeRoom(roomId, room)]));
         renderRooms();
         if (!state.activeRoom) {
@@ -309,6 +350,7 @@
       };
       onValue(roomsRef, callback, error => {
         console.error('serverRooms onValue failed', { serverId, path:`serverRooms/${serverId}` }, error);
+        updateDiagnostics({ listenPath:`serverRooms/${serverId}`, serverId, errorCode:error?.code || null, errorMessage:error?.message || String(error || '') });
         setStatus(describeError(error, 'ルーム一覧の読み込みに失敗しました。Firebaseの読み取り権限または参照パスを確認してください。'));
       });
       state.roomsUnsub = () => off(roomsRef, 'value', callback);
@@ -356,6 +398,7 @@
           if (type === 'chat') console.log("CLICK create chat room");
           if (type === 'map') console.log("CLICK create map room");
           if (type === 'voice') console.log("CLICK create voice room");
+          updateDiagnostics({ clicked:`create ${type} room button` });
           createRoom(type);
         };
         root.appendChild(btn);
@@ -375,8 +418,11 @@
       const roomId = roomRef.key;
       const roomData = { roomId, id:roomId, serverId, type:roomType(type), name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
       const path = `serverRooms/${serverId}/${roomId}`;
+      updateDiagnostics({ clicked:`create ${type} room`, serverId, createPath:path, listenPath:`serverRooms/${serverId}`, roomData, roomSavedReadback:null, errorCode:null, errorMessage:null });
       console.log("CREATE ROOM activeServer:", activeServer);
       console.log("CREATE ROOM serverId:", serverId);
+      console.log("CREATE ROOM type:", type);
+      console.log("CREATE ROOM name:", name);
       console.log("CREATE ROOM path:", path);
       console.log("CREATE ROOM data:", roomData);
       console.log("CREATE ROOM roomRef path:", path);
@@ -390,6 +436,7 @@
         setStatus('ルームを作成しました。');
         const saved = (await get(ref(db, path))).val();
         console.log("ROOM SAVED READBACK:", saved);
+        updateDiagnostics({ serverId, createPath:path, roomData, roomSavedReadback:saved, errorCode:null, errorMessage:null });
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
         state.rooms[roomId] = normalizeRoom(roomId, saved);
         renderRooms();
@@ -397,6 +444,7 @@
       } catch (error) {
         console.error("CREATE ROOM FAILED:", error?.code, error?.message, error);
         console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData, code:error?.code, message:error?.message }, error);
+        updateDiagnostics({ serverId, createPath:path, roomData, errorCode:error?.code || null, errorMessage:error?.message || String(error || '') });
         setStatus(`${describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。')} / path: ${path}`);
       }
     }
@@ -504,6 +552,7 @@
       root.innerHTML = '<div class="section-title">危険な操作</div><div class="empty">サーバー本体と関連データを完全に削除します。この操作は元に戻せません。</div><button id="deleteServerBtn" class="danger" type="button" style="margin-top:8px">サーバーを削除</button>';
       $('deleteServerBtn').onclick = () => {
         console.log("CLICK delete server");
+        updateDiagnostics({ clicked:'delete server button' });
         deleteActiveServer();
       };
     }
@@ -517,6 +566,7 @@
       console.log("DELETE SERVER hostUid:", activeServer.hostUid);
       console.log("DELETE SERVER currentUid:", auth.currentUser?.uid);
       console.log("DELETE SERVER current uid:", user.uid);
+      updateDiagnostics({ clicked:'delete server', deleteServerId:serverId, deleteHostUid:activeServer.hostUid, deleteCurrentUid:user.uid, serverId, errorCode:null, errorMessage:null });
       if (activeServer.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
       const message = `このサーバー「${activeServer.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
       if (!confirm(message)) return;
@@ -548,6 +598,7 @@
           `servers/${serverId}`
         ];
         console.log("DELETE SERVER paths:", deletePaths);
+        updateDiagnostics({ deleteServerId:serverId, deleteHostUid:activeServer.hostUid, deleteCurrentUid:user.uid, deletePaths });
         const deleteResults = [];
         for (const path of [...new Set(deletePaths)]) {
           try {
@@ -560,6 +611,7 @@
             deleteResults.push({ path, ok:false, code:error?.code, message:error?.message });
           }
         }
+        updateDiagnostics({ deleteResults });
         const hardFailures = deleteResults.filter(result => !result.ok && !result.path.startsWith('userServers/'));
         if (hardFailures.length) throw new Error(`DELETE_SERVER_PARTIAL_FAILURE: ${hardFailures.map(item => `${item.path}:${item.code || item.message}`).join(', ')}`);
         const deleteReadback = await Promise.all([
@@ -571,6 +623,7 @@
           get(ref(db, `serverMapRooms/${serverId}`)).then(snap => ['serverMapRooms', snap.val()]).catch(error => ['serverMapRooms error', error?.message || error])
         ]);
         console.log("DELETE SERVER READBACK:", Object.fromEntries(deleteReadback));
+        updateDiagnostics({ deleteResults, roomSavedReadback:null, serverRoomsSnapshot:null });
         closeActiveServer();
         subscribeUserServers(user);
         const skipped = deleteResults.filter(result => !result.ok);
@@ -579,6 +632,7 @@
         console.error("DELETE SERVER FAILED:", error?.code, error?.message, error);
         console.error("DELETE SERVER failed:", error);
         console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
+        updateDiagnostics({ deleteServerId:serverId, deleteHostUid:activeServer?.hostUid || null, deleteCurrentUid:user.uid, errorCode:error?.code || null, errorMessage:error?.message || String(error || '') });
         setStatus(`${describeError(error, 'サーバー削除に失敗しました。')} / serverId: ${serverId}`);
       } finally {
         const btn = $('deleteServerBtn');
@@ -592,6 +646,7 @@
       $('gate').hidden = allowed;
       $('serverHome').hidden = !allowed;
       if (!allowed) { closeActiveServer(); renderServerList([]); return; }
+      updateDiagnostics({ clicked:'authStateChanged', serverId:getServerId(state.activeServer) || null });
       subscribeUserServers(user);
     }
 
@@ -602,6 +657,7 @@
     $('serverCloseBtn').onclick = closeActiveServer;
     $('serverJoinCode').addEventListener('input', event => event.target.value = safeCode(event.target.value));
     $('serverJoinCode').addEventListener('keydown', event => { if (event.key === 'Enter') joinServer(); });
+    updateDiagnostics({ clicked:'page loaded' });
     onAuthStateChanged(auth, showForUser);
   </script>
 </body>
