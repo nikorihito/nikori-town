@@ -65,6 +65,7 @@
     "serverRooms": {
       "$serverId": {
         ".read": "auth != null",
+        ".write": "auth != null",
         "$roomId": {
           ".write": "auth != null"
         }
