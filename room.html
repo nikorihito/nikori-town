@@ -1197,12 +1197,21 @@
       await pushPlayer(true);
 
       if (player.uid) {
-        await update(ref(db, roomStatePath()), {
+        const path = roomStatePath();
+        const payload = {
           mapIndex: currentMapIndex,
           mapId: getActiveMapData().id,
           floorId: currentFloorId,
           updatedAt: serverTimestamp()
-        }).catch(console.warn);
+        };
+        console.log("CHANGE FLOOR path:", path);
+        console.log("CHANGE FLOOR floorId:", floorId);
+        try {
+          await update(ref(db, path), payload);
+        } catch (error) {
+          console.error("CHANGE FLOOR FAILED:", error?.code, error?.message, error);
+          alert(`階移動に失敗しました。${error?.code || ""} ${error?.message || ""}`.trim());
+        }
       }
     }
 
