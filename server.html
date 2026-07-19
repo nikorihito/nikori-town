@@ -111,7 +111,8 @@
       for (let i = 0; i < 15; i++) out += chars[Math.floor(Math.random() * chars.length)];
       return out;
     };
-    const serverId = () => `server_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+    const createServerId = () => `server_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+    const getServerId = server => server?.serverId || server?.id || '';
     const roleLabel = role => role === 'operator' ? 'operator' : role === 'guest' ? 'guest' : 'member';
     const canOperate = () => state.activeMember?.role === 'operator';
     const canDeleteServer = () => Boolean(auth.currentUser?.uid && state.activeServer?.hostUid === auth.currentUser.uid);
@@ -153,11 +154,12 @@
     }
     async function ensureDailyCode(server, uid){
       const date = todayKey();
+      const id = getServerId(server);
       if (server?.joinCode && server.joinCodeDate === date) return server;
-      const joinCode = await reserveJoinCode(server.id, uid, date);
+      const joinCode = await reserveJoinCode(id, uid, date);
       const patch = { joinCode, joinCodeDate:date, updatedAt:Date.now() };
-      await update(ref(db, `servers/${server.id}`), patch);
-      await update(ref(db, `serverCodes/${joinCode}`), { serverId:server.id, joinCode, joinCodeDate:date, updatedAt:Date.now() }).catch(error => console.error('serverCodes daily write failed', error));
+      await update(ref(db, `servers/${id}`), patch);
+      await update(ref(db, `serverCodes/${joinCode}`), { serverId:id, joinCode, joinCodeDate:date, updatedAt:Date.now() }).catch(error => console.error('serverCodes daily write failed', error));
       return Object.assign(server, patch);
     }
     async function writeStep(label, path, action){
@@ -175,7 +177,7 @@
       if (!isGoogleUser(user)) return setStatus('サーバー機能を使うにはGoogleログインが必要です。');
       $('serverCreateBtn').disabled = true;
       setStatus('サーバーを作成しています...');
-      const id = serverId();
+      const id = createServerId();
       const date = todayKey();
       const now = Date.now();
       let joinCode = '';
@@ -183,7 +185,7 @@
       const warnings = [];
       try {
         joinCode = await reserveJoinCode(id, user.uid, date);
-        const server = { id, name:String($('serverCreateName').value || `${userName(user)} サーバー`).trim().slice(0,28), icon:'🌐', description:'', hostUid:user.uid, hostName:userName(user), joinCode, joinCodeDate:date, createdAt:now, updatedAt:now };
+        const server = { serverId:id, id, name:String($('serverCreateName').value || `${userName(user)} サーバー`).trim().slice(0,28), icon:'🌐', description:'', hostUid:user.uid, hostName:userName(user), joinCode, joinCodeDate:date, createdAt:now, updatedAt:now };
         await writeStep('servers write', `servers/${id}`, () => update(ref(db, `servers/${id}`), server));
         serverSaved = true;
         try { await writeStep('serverMembers write', `serverMembers/${id}/${user.uid}`, () => update(ref(db, `serverMembers/${id}/${user.uid}`), { uid:user.uid, name:userName(user), role:'operator', joinedAt:now, updatedAt:now })); } catch(error){ warnings.push(`serverMembers: ${error?.code || error?.message || error}`); }
@@ -232,7 +234,7 @@
         const servers = [];
         for (const item of rows) {
           const server = (await get(ref(db, `servers/${item.serverId}`)).catch(() => null))?.val();
-          if (server) servers.push({ ...server, id:server.id || item.serverId, lastOpenedAt:item.lastOpenedAt || item.joinedAt || 0 });
+        if (server) servers.push({ ...server, serverId:item.serverId, id:item.serverId, lastOpenedAt:item.lastOpenedAt || item.joinedAt || 0 });
         }
         servers.sort((a,b) => Number(b.lastOpenedAt || b.updatedAt || 0) - Number(a.lastOpenedAt || a.updatedAt || 0));
         renderServerList(servers);
@@ -257,40 +259,42 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = '開く';
-        btn.onclick = () => openServer(server.id || server.serverId);
+        btn.onclick = () => openServer(server.serverId || server.id);
         row.appendChild(btn);
         list.appendChild(row);
       }
     }
-    async function openServer(id){
+    async function openServer(serverId){
       const user = auth.currentUser;
-      let server = (await get(ref(db, `servers/${id}`)).catch(() => null))?.val();
-      const member = (await get(ref(db, `serverMembers/${id}/${user.uid}`)).catch(() => null))?.val();
+      let server = (await get(ref(db, `servers/${serverId}`)).catch(() => null))?.val();
+      const member = (await get(ref(db, `serverMembers/${serverId}/${user.uid}`)).catch(() => null))?.val();
       if (!server) {
-        await remove(ref(db, `userServers/${user.uid}/${id}`)).catch(console.warn);
+        await remove(ref(db, `userServers/${user.uid}/${serverId}`)).catch(console.warn);
         return setStatus('このサーバーは削除されました。');
       }
       if (!member) return setStatus('サーバーに参加していません。');
-      if (member.role === 'operator') server = await ensureDailyCode({ ...server, id:server.id || id }, user.uid).catch(error => { console.error('ensureDailyCode failed', error); return server; });
+      if (member.role === 'operator') server = await ensureDailyCode({ ...server, serverId, id:serverId }, user.uid).catch(error => { console.error('ensureDailyCode failed', error); return server; });
       closeActiveServer();
-      state.activeServer = { ...server, id:server.id || id };
+      state.activeServer = { ...server, serverId, id:serverId };
       state.activeMember = member;
       $('serverHome').hidden = true;
       $('serverApp').hidden = false;
       $('activeServerIcon').textContent = server.icon || '🌐';
       $('activeServerName').textContent = server.name || 'サーバー';
       $('activeServerRole').textContent = `${roleLabel(member.role)}${server.hostUid === user.uid ? ' / host 👑' : ''}`;
-      await update(ref(db, `userServers/${user.uid}/${id}`), { lastOpenedAt:Date.now() }).catch(console.warn);
-      subscribeMembers(id);
-      subscribeRooms(id);
+      await update(ref(db, `userServers/${user.uid}/${serverId}`), { lastOpenedAt:Date.now() }).catch(console.warn);
+      subscribeMembers(serverId);
+      subscribeRooms(serverId);
       renderCreateTools();
       renderSettings();
     }
-    function subscribeRooms(id){
-      const roomsRef = ref(db, `serverRooms/${id}`);
+    function subscribeRooms(serverId){
+      const roomsRef = ref(db, `serverRooms/${serverId}`);
+      console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
       const callback = snap => {
-        console.log('serverRooms onValue path:', `serverRooms/${id}`);
-        console.log('serverRooms snapshot:', snap.val());
+        console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
+        console.log("LISTEN serverRooms snapshot:", snap.val());
+        console.log("serverRooms snapshot:", snap.val());
         state.rooms = Object.fromEntries(Object.entries(snap.val() || {}).map(([roomId, room]) => [
           roomId,
           { id:roomId, ...room, type:['chat','map','voice'].includes(room?.type) ? room.type : 'chat' }
@@ -302,7 +306,7 @@
         }
       };
       onValue(roomsRef, callback, error => {
-        console.error('serverRooms onValue failed', { serverId:id, path:`serverRooms/${id}` }, error);
+        console.error('serverRooms onValue failed', { serverId, path:`serverRooms/${serverId}` }, error);
         setStatus(describeError(error, 'ルーム一覧の読み込みに失敗しました。Firebaseの読み取り権限または参照パスを確認してください。'));
       });
       state.roomsUnsub = () => off(roomsRef, 'value', callback);
@@ -352,33 +356,37 @@
     }
     async function createRoom(type){
       const user = auth.currentUser;
-      const server = state.activeServer;
-      if (!server || !canOperate()) return;
+      const activeServer = state.activeServer;
+      const serverId = getServerId(activeServer);
+      if (!activeServer || !serverId || !canOperate()) return;
       if (!['chat','map','voice'].includes(type)) return setStatus('ルーム種別が正しくありません。');
       const defaults = { chat:'雑談', map:'みんなのマップ', voice:'通話ルーム' };
       const name = safeName(prompt('ルーム名', defaults[type] || 'ルーム'));
       if (!name) return;
-      const roomRef = push(ref(db, `serverRooms/${server.id}`));
+      const roomRef = push(ref(db, `serverRooms/${serverId}`));
       const now = Date.now();
-      const room = { id:roomRef.key, type, name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
-      const path = `serverRooms/${server.id}/${room.id}`;
-      console.log('create room serverId:', server.id);
-      console.log('create room roomId:', room.id);
-      console.log('create room path:', path);
-      console.log('create room data:', room);
+      const roomId = roomRef.key;
+      const roomData = { roomId, id:roomId, serverId, type, name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
+      const path = `serverRooms/${serverId}/${roomId}`;
+      console.log("CREATE ROOM activeServer:", activeServer);
+      console.log("CREATE ROOM serverId:", serverId);
+      console.log("CREATE ROOM roomRef path:", path);
+      console.log("CREATE ROOM roomData:", roomData);
+      console.log("create server room path:", path);
+      console.log("create server room data:", roomData);
       setStatus('ルームを作成しています...');
       try {
-        await writeStep('serverRooms create write', path, () => set(roomRef, room));
-        console.log('create room write succeeded:', path);
+        await writeStep('serverRooms create write', path, () => set(roomRef, roomData));
+        console.log('CREATE ROOM write succeeded:', path);
         setStatus('ルームを作成しました。');
         const saved = (await get(ref(db, path))).val();
-        console.log('create room saved data:', saved);
+        console.log("ROOM SAVED READBACK:", saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
-        state.rooms[room.id] = { id:room.id, ...saved, type:['chat','map','voice'].includes(saved?.type) ? saved.type : type };
+        state.rooms[roomId] = { id:roomId, ...saved, type:['chat','map','voice'].includes(saved?.type) ? saved.type : type };
         renderRooms();
-        selectRoom(room.id);
+        selectRoom(roomId);
       } catch (error) {
-        console.error('create server room failed', { serverId:server.id, roomId:room.id, type, path, room }, error);
+        console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData }, error);
         setStatus(describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
       }
     }
@@ -396,7 +404,8 @@
     }
     function renderChat(room){
       $('serverRoomContent').innerHTML = '<div id="chatLog" class="chat"></div><form id="chatForm" class="row chat-form"><input id="chatInput" maxlength="240" placeholder="メッセージを入力" autocomplete="off" /><button type="submit">送信</button></form>';
-      const messagesRef = ref(db, `serverMessages/${state.activeServer.id}/${room.id}`);
+      const serverId = getServerId(state.activeServer);
+      const messagesRef = ref(db, `serverMessages/${serverId}/${room.id}`);
       const callback = snap => {
         const log = $('chatLog'); if (!log) return;
         log.innerHTML = '';
@@ -422,7 +431,8 @@
     }
     function renderVoice(room){
       $('serverRoomContent').innerHTML = '<div class="gate">ボイスルームは入退室状態とマイク/カメラ/画面共有の同期UIです。</div><div class="row" style="margin-top:10px"><button id="voiceJoinBtn" type="button">入室</button><button id="voiceMicBtn" class="secondary" type="button">マイク切替</button><button id="voiceCameraBtn" class="secondary" type="button">カメラ切替</button><button id="voiceScreenBtn" class="secondary" type="button">画面共有切替</button><button id="voiceLeaveBtn" class="secondary" type="button">退出</button></div><div id="voiceMembers" class="server-list"></div>';
-      const voicePath = `serverVoiceState/${state.activeServer.id}/${room.id}`;
+      const serverId = getServerId(state.activeServer);
+      const voicePath = `serverVoiceState/${serverId}/${room.id}`;
       const updateVoice = async patch => update(ref(db, `${voicePath}/${auth.currentUser.uid}`), { uid:auth.currentUser.uid, name:userName(auth.currentUser), joinedAt:Date.now(), ...patch });
       $('voiceJoinBtn').onclick = () => updateVoice({ micEnabled:false, cameraEnabled:false, screenSharing:false });
       $('voiceMicBtn').onclick = () => updateVoice({ micEnabled:true });
@@ -457,9 +467,10 @@
       $('joinCodeDisplay').textContent = `参加コード: ${server.joinCode || '-'} / 有効日: ${server.joinCodeDate || '-'}`;
       $('settingSaveBtn').onclick = async () => {
         const patch = { name:String($('settingName').value || 'サーバー').trim().slice(0,28), icon:String($('settingIcon').value || '🌐').trim().slice(0,80), description:String($('settingDescription').value || '').trim().slice(0,120), updatedAt:Date.now() };
-        await update(ref(db, `servers/${server.id}`), patch); Object.assign(state.activeServer, patch); $('activeServerName').textContent = patch.name; $('activeServerIcon').textContent = patch.icon;
+        const serverId = getServerId(server);
+        await update(ref(db, `servers/${serverId}`), patch); Object.assign(state.activeServer, patch); $('activeServerName').textContent = patch.name; $('activeServerIcon').textContent = patch.icon;
       };
-      $('reissueBtn').onclick = async () => { await ensureDailyCode({ ...server, joinCodeDate:'' }, auth.currentUser.uid); Object.assign(state.activeServer, (await get(ref(db, `servers/${server.id}`))).val() || {}); renderSettings(); };
+      $('reissueBtn').onclick = async () => { const serverId = getServerId(server); await ensureDailyCode({ ...server, serverId, id:serverId, joinCodeDate:'' }, auth.currentUser.uid); Object.assign(state.activeServer, { serverId, id:serverId }, (await get(ref(db, `servers/${serverId}`))).val() || {}); renderSettings(); };
       renderRoleTools();
       renderDeleteServerTools();
     }
@@ -470,7 +481,7 @@
         const label = document.createElement('div'); label.textContent = memberName(member);
         const select = document.createElement('select'); select.disabled = member.uid === state.activeServer.hostUid;
         for (const role of ['operator','member','guest']) { const option = document.createElement('option'); option.value = role; option.textContent = role; option.selected = roleLabel(member.role) === role; select.appendChild(option); }
-        select.onchange = () => update(ref(db, `serverMembers/${state.activeServer.id}/${member.uid}`), { role:select.value, updatedAt:Date.now() });
+        select.onchange = () => update(ref(db, `serverMembers/${getServerId(state.activeServer)}/${member.uid}`), { role:select.value, updatedAt:Date.now() });
         row.append(label, select); root.appendChild(row);
       }
     }
@@ -486,6 +497,7 @@
     async function deleteActiveServer(){
       const user = auth.currentUser;
       const server = state.activeServer;
+      const serverId = getServerId(server);
       if (!user || !server) return;
       if (server.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
       const message = `このサーバー「${server.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
@@ -495,7 +507,7 @@
       $('deleteServerBtn').disabled = true;
       setStatus('サーバーを削除しています...');
       try {
-        const latest = (await get(ref(db, `servers/${server.id}`))).val();
+        const latest = (await get(ref(db, `servers/${serverId}`))).val();
         if (!latest) {
           closeActiveServer();
           subscribeUserServers(user);
@@ -503,18 +515,18 @@
         }
         if (latest.hostUid !== user.uid) throw new Error('ONLY_HOST_CAN_DELETE_SERVER');
         const [membersSnap, codeSnap] = await Promise.all([
-          get(ref(db, `serverMembers/${server.id}`)).catch(error => { console.error('serverMembers read before delete failed', error); return null; }),
-          get(dbQuery(ref(db, 'serverCodes'), orderByChild('serverId'), equalTo(server.id))).catch(error => { console.error('serverCodes read before delete failed', error); return null; })
+          get(ref(db, `serverMembers/${serverId}`)).catch(error => { console.error('serverMembers read before delete failed', error); return null; }),
+          get(dbQuery(ref(db, 'serverCodes'), orderByChild('serverId'), equalTo(serverId))).catch(error => { console.error('serverCodes read before delete failed', error); return null; })
         ]);
         const updates = {
-          [`servers/${server.id}`]: null,
-          [`serverMembers/${server.id}`]: null,
-          [`serverRooms/${server.id}`]: null,
-          [`serverMessages/${server.id}`]: null,
-          [`serverVoiceState/${server.id}`]: null,
-          [`serverMapRooms/${server.id}`]: null
+          [`servers/${serverId}`]: null,
+          [`serverMembers/${serverId}`]: null,
+          [`serverRooms/${serverId}`]: null,
+          [`serverMessages/${serverId}`]: null,
+          [`serverVoiceState/${serverId}`]: null,
+          [`serverMapRooms/${serverId}`]: null
         };
-        for (const uid of Object.keys(membersSnap?.val() || {})) updates[`userServers/${uid}/${server.id}`] = null;
+        for (const uid of Object.keys(membersSnap?.val() || {})) updates[`userServers/${uid}/${serverId}`] = null;
         if (latest.joinCode) updates[`serverCodes/${latest.joinCode}`] = null;
         for (const code of Object.keys(codeSnap?.val() || {})) updates[`serverCodes/${code}`] = null;
         await writeStep('server delete update', 'server delete multi-path update', () => update(ref(db), updates));
@@ -522,7 +534,7 @@
         subscribeUserServers(user);
         setStatus('サーバーを削除しました。');
       } catch (error) {
-        console.error('deleteActiveServer failed', { serverId:server.id, uid:user.uid, code:error?.code, message:error?.message }, error);
+        console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
         setStatus(describeError(error, 'サーバー削除に失敗しました。'));
       } finally {
         const btn = $('deleteServerBtn');

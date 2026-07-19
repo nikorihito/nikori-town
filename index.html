@@ -265,6 +265,7 @@
       return out;
     }
     function createServerId(){ return `server_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`; }
+    function getServerId(server){ return server?.serverId || server?.id || ''; }
     function createServerRoomId(){ return push(ref(db, '_serverRoomIds')).key || `room_${Date.now().toString(36)}`; }
     function displayServerIcon(icon){ const value = String(icon || '🌐').trim(); return value || '🌐'; }
     function roleLabel(role){ return role === 'operator' ? 'operator' : role === 'guest' ? 'guest' : 'member'; }
@@ -478,7 +479,7 @@
         const servers = [];
         for (const item of rows) {
           const server = (await get(ref(db, `servers/${item.serverId}`)).catch(() => null))?.val();
-          if (server) servers.push({ ...server, id: server.id || item.serverId, lastOpenedAt: item.lastOpenedAt || item.joinedAt || 0 });
+          if (server) servers.push({ ...server, serverId: item.serverId, id: item.serverId, lastOpenedAt: item.lastOpenedAt || item.joinedAt || 0 });
         }
         servers.sort((a, b) => Number(b.lastOpenedAt || b.updatedAt || 0) - Number(a.lastOpenedAt || a.updatedAt || 0));
         renderServerList(servers);
@@ -514,7 +515,7 @@
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
         openBtn.textContent = '開く';
-        openBtn.onclick = () => openServer(server.id || server.serverId);
+        openBtn.onclick = () => openServer(server.serverId || server.id);
         row.append(icon, main, openBtn);
         list.appendChild(row);
       }
@@ -526,14 +527,14 @@
       const member = (await get(ref(db, `serverMembers/${serverId}/${user.uid}`)).catch(() => null))?.val();
       if (!server || !member) { setServerStatus('サーバーに参加していません。'); return; }
       if (member.role === 'operator') {
-        server = await ensureServerDailyJoinCode({ ...server, id: server.id || serverId }, user.uid).catch(error => {
+        server = await ensureServerDailyJoinCode({ ...server, serverId, id: serverId }, user.uid).catch(error => {
           console.error('ensureServerDailyJoinCode on open failed', { uid: user.uid, serverId }, error);
           setServerStatus(describeFirebaseError(error, '今日の参加コード更新に失敗しました。'));
           return server;
         });
       }
       closeActiveServer();
-      serverState.activeServer = { ...server, id: server.id || serverId };
+      serverState.activeServer = { ...server, serverId, id: serverId };
       serverState.activeMember = member;
       $('serverHome').hidden = true;
       $('serverApp').hidden = false;
@@ -548,9 +549,11 @@
     }
     function subscribeServerRooms(serverId){
       const roomsRef = ref(db, `serverRooms/${serverId}`);
+      console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
       const callback = snapshot => {
-        console.log('serverRooms onValue path:', `serverRooms/${serverId}`);
-        console.log('serverRooms snapshot:', snapshot.val());
+        console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
+        console.log("LISTEN serverRooms snapshot:", snapshot.val());
+        console.log("serverRooms snapshot:", snapshot.val());
         serverState.rooms = Object.fromEntries(Object.entries(snapshot.val() || {}).map(([roomId, room]) => [
           roomId,
           { id: roomId, ...room, type: ['chat', 'map', 'voice'].includes(room?.type) ? room.type : 'chat' }
@@ -633,44 +636,48 @@
     }
     async function createServerRoom(type){
       const user = auth.currentUser;
-      const server = serverState.activeServer;
-      if (!isGoogleUser(user) || !server || !canOperate()) return;
+      const activeServer = serverState.activeServer;
+      const serverId = getServerId(activeServer);
+      if (!isGoogleUser(user) || !activeServer || !serverId || !canOperate()) return;
       if (!['chat', 'map', 'voice'].includes(type)) return setServerStatus('ルーム種別が正しくありません。');
       const defaults = { chat: '雑談', map: 'みんなのマップ', voice: '通話ルーム' };
       const name = safeName(prompt('ルーム名', defaults[type] || 'ルーム'));
       if (!name) return;
       const roomId = createServerRoomId();
       const now = Date.now();
-      const path = `serverRooms/${server.id}/${roomId}`;
-      const roomData = { id: roomId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now };
-      console.log('create room serverId:', server.id);
-      console.log('create room roomId:', roomId);
-      console.log('create room path:', path);
-      console.log('create room data:', roomData);
+      const path = `serverRooms/${serverId}/${roomId}`;
+      const roomData = { roomId, id: roomId, serverId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now };
+      console.log("CREATE ROOM activeServer:", activeServer);
+      console.log("CREATE ROOM serverId:", serverId);
+      console.log("CREATE ROOM roomRef path:", path);
+      console.log("CREATE ROOM roomData:", roomData);
+      console.log("create server room path:", path);
+      console.log("create server room data:", roomData);
       setServerStatus('ルームを作成しています...');
       try {
         await update(ref(db, path), roomData);
-        console.log('create room write succeeded:', path);
+        console.log('CREATE ROOM write succeeded:', path);
         const saved = (await get(ref(db, path))).val();
-        console.log('create room saved data:', saved);
+        console.log("ROOM SAVED READBACK:", saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
         serverState.rooms[roomId] = { id: roomId, ...saved, type: ['chat', 'map', 'voice'].includes(saved?.type) ? saved.type : type };
         renderServerRooms();
         setServerStatus('ルームを作成しました。');
         selectServerRoom(roomId);
       } catch (error) {
-        console.error('create server room failed', { serverId: server.id, roomId, type, path, roomData }, error);
+        console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData }, error);
         setServerStatus(describeServerError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
       }
     }
     async function deleteActiveServerRoom(){
       const server = serverState.activeServer;
+      const serverId = getServerId(server);
       const room = serverState.activeRoom;
       if (!server || !room || !canOperate()) return;
       if (!confirm(`${room.name || 'ルーム'} を削除しますか？`)) return;
-      await remove(ref(db, `serverRooms/${server.id}/${room.id}`));
-      await remove(ref(db, `serverMessages/${server.id}/${room.id}`)).catch(console.warn);
-      await remove(ref(db, `serverVoiceState/${server.id}/${room.id}`)).catch(console.warn);
+      await remove(ref(db, `serverRooms/${serverId}/${room.id}`));
+      await remove(ref(db, `serverMessages/${serverId}/${room.id}`)).catch(console.warn);
+      await remove(ref(db, `serverVoiceState/${serverId}/${room.id}`)).catch(console.warn);
       serverState.activeRoom = null;
       $('activeRoomTitle').textContent = 'ルームを選択してください';
       $('serverRoomContent').innerHTML = '';
@@ -691,7 +698,8 @@
     }
     function renderChatRoom(room){
       $('serverRoomContent').innerHTML = '<div id="serverChatLog" class="server-chat"></div><form id="serverChatForm" class="row"><input id="serverChatInput" maxlength="240" placeholder="メッセージを入力" autocomplete="off" /><button type="submit">送信</button></form>';
-      const messagesRef = ref(db, `serverMessages/${serverState.activeServer.id}/${room.id}`);
+      const serverId = getServerId(serverState.activeServer);
+      const messagesRef = ref(db, `serverMessages/${serverId}/${room.id}`);
       const callback = snapshot => renderServerMessages(snapshot.val() || {});
       onValue(messagesRef, callback);
       serverState.messagesUnsub = () => off(messagesRef, 'value', callback);
@@ -723,12 +731,13 @@
       event.preventDefault();
       const user = auth.currentUser;
       const server = serverState.activeServer;
+      const serverId = getServerId(server);
       const room = serverState.activeRoom;
       const input = $('serverChatInput');
       const text = input.value.trim().slice(0, 240);
       if (!isGoogleUser(user) || !server || !room || !text) return;
       input.value = '';
-      const msgRef = push(ref(db, `serverMessages/${server.id}/${room.id}`));
+      const msgRef = push(ref(db, `serverMessages/${serverId}/${room.id}`));
       await set(msgRef, { uid: user.uid, name: userName(user), role: serverState.activeMember?.role || 'member', text, createdAt: Date.now() });
     }
     function renderVoiceRoom(room){
@@ -737,8 +746,9 @@
       $('voiceMicBtn').onclick = () => toggleVoiceFlag(room, 'micEnabled');
       $('voiceCameraBtn').onclick = () => toggleVoiceFlag(room, 'cameraEnabled');
       $('voiceScreenBtn').onclick = () => toggleVoiceFlag(room, 'screenSharing');
-      $('voiceLeaveBtn').onclick = () => remove(ref(db, `serverVoiceState/${serverState.activeServer.id}/${room.id}/${auth.currentUser.uid}`));
-      const voiceRef = ref(db, `serverVoiceState/${serverState.activeServer.id}/${room.id}`);
+      const serverId = getServerId(serverState.activeServer);
+      $('voiceLeaveBtn').onclick = () => remove(ref(db, `serverVoiceState/${serverId}/${room.id}/${auth.currentUser.uid}`));
+      const voiceRef = ref(db, `serverVoiceState/${serverId}/${room.id}`);
       const callback = snapshot => renderVoiceMembers(room, snapshot.val() || {});
       onValue(voiceRef, callback);
       serverState.voiceUnsub = () => off(voiceRef, 'value', callback);
@@ -746,11 +756,13 @@
     async function updateVoiceState(room, patch){
       const user = auth.currentUser;
       if (!isGoogleUser(user)) return;
-      await update(ref(db, `serverVoiceState/${serverState.activeServer.id}/${room.id}/${user.uid}`), { uid: user.uid, name: userName(user), joinedAt: Date.now(), ...patch });
+      const serverId = getServerId(serverState.activeServer);
+      await update(ref(db, `serverVoiceState/${serverId}/${room.id}/${user.uid}`), { uid: user.uid, name: userName(user), joinedAt: Date.now(), ...patch });
     }
     async function toggleVoiceFlag(room, key){
       const user = auth.currentUser;
-      const current = (await get(ref(db, `serverVoiceState/${serverState.activeServer.id}/${room.id}/${user.uid}/${key}`)).catch(() => null))?.val();
+      const serverId = getServerId(serverState.activeServer);
+      const current = (await get(ref(db, `serverVoiceState/${serverId}/${room.id}/${user.uid}/${key}`)).catch(() => null))?.val();
       await updateVoiceState(room, { [key]: !current });
     }
     function renderVoiceMembers(room, data){
@@ -800,7 +812,8 @@
       const server = serverState.activeServer;
       if (!server || !canOperate()) return;
       const patch = { name: String($('serverSettingName').value || 'サーバー').trim().slice(0, 28), icon: String($('serverSettingIcon').value || '🌐').trim().slice(0, 80), description: String($('serverSettingDescription').value || '').trim().slice(0, 120), updatedAt: Date.now() };
-      await update(ref(db, `servers/${server.id}`), patch);
+      const serverId = getServerId(server);
+      await update(ref(db, `servers/${serverId}`), patch);
       Object.assign(serverState.activeServer, patch);
       $('activeServerName').textContent = patch.name;
       $('activeServerIcon').textContent = displayServerIcon(patch.icon);
@@ -825,7 +838,7 @@
           option.selected = roleLabel(member.role) === role;
           select.appendChild(option);
         }
-        select.onchange = () => update(ref(db, `serverMembers/${serverState.activeServer.id}/${member.uid}`), { role: select.value, updatedAt: Date.now() });
+        select.onchange = () => update(ref(db, `serverMembers/${getServerId(serverState.activeServer)}/${member.uid}`), { role: select.value, updatedAt: Date.now() });
         row.append(label, select);
         if (member.uid !== serverState.activeServer.hostUid) {
           const kick = document.createElement('button');
@@ -834,8 +847,9 @@
           kick.textContent = '退出させる';
           kick.onclick = async () => {
             if (!confirm(`${safeName(member.name)} をサーバーから外しますか？`)) return;
-            await remove(ref(db, `serverMembers/${serverState.activeServer.id}/${member.uid}`));
-            await remove(ref(db, `userServers/${member.uid}/${serverState.activeServer.id}`)).catch(console.warn);
+            const serverId = getServerId(serverState.activeServer);
+            await remove(ref(db, `serverMembers/${serverId}/${member.uid}`));
+            await remove(ref(db, `userServers/${member.uid}/${serverId}`)).catch(console.warn);
           };
           row.appendChild(kick);
         }
