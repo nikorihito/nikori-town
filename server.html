@@ -221,6 +221,10 @@
     .server-map-chat{display:grid;grid-template-columns:1fr auto;gap:10px}
     .server-map-chat-log{max-height:130px;overflow:auto;display:grid;gap:8px}
     .server-map-chip{padding:7px 10px;border-radius:999px;background:rgba(255,255,255,.72);border:1px solid var(--line);font-size:12px;color:var(--muted);font-weight:850}
+    .floor-toggle{position:absolute;top:12px;left:12px;z-index:3;width:44px;height:44px;border-radius:16px;padding:0;font-size:22px}
+    .floor-slider-panel{position:absolute;top:64px;left:12px;z-index:4;width:190px;padding:12px;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.92);box-shadow:var(--soft-shadow)}
+    .floor-numbers{display:flex;justify-content:space-between;font-weight:950;color:#087fa8;margin-bottom:8px}
+    .floor-slider{accent-color:#35b9e8}
     .modal-backdrop{position:fixed;inset:0;display:grid;place-items:center;background:rgba(29,67,86,.28);z-index:40;padding:18px;backdrop-filter:blur(8px)}
     .modal{width:min(460px,100%);border:1px solid rgba(255,255,255,.78);border-radius:28px;background:var(--surface-strong);box-shadow:var(--shadow);padding:18px;display:grid;gap:12px}
     .modal h2{margin:0;font-size:20px}
@@ -346,11 +350,14 @@
       voiceUnsub:null,
       mapPlayersUnsub:null,
       mapMessagesUnsub:null,
+      mapStateUnsub:null,
       mapLoop:null,
       mapKeys:new Set(),
       mapRoomId:null,
       mapPlayers:{},
       mapMessages:[],
+      mapState:{},
+      mapLocal:null,
       activeServer:null,
       activeMember:null,
       activeRoom:null,
@@ -410,6 +417,42 @@
       return out;
     };
     const createServerId = () => `server_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+    const MAPS = [
+      { id:'lakeside_park', name:'公園', type:'single', texture:'./map/textures/lakeside_park.png', mask:'./map/atarihantei/lakeside_park.png', spawn:{ x:1024, y:680 } },
+      { id:'forest', name:'森林', type:'single', texture:'./map/textures/forest.png', mask:'./map/atarihantei/forest_atarihantei.png', spawn:{ x:1024, y:680 } },
+      { id:'underwater_city', name:'海底都市', type:'single', texture:'./map/textures/underwater_city.png', mask:'./map/atarihantei/underwater_city.png', spawn:{ x:1024, y:680 } },
+      { id:'sky_city', name:'空中都市', type:'single', texture:'./map/textures/sky_city.png', mask:'./map/atarihantei/sky_city.png', spawn:{ x:1024, y:680 } },
+      { id:'cyber_city', name:'未来電脳都市', type:'single', texture:'./map/textures/cyber_city.png', mask:'./map/atarihantei/cyber_city_atarihantei.png', spawn:{ x:1024, y:680 } },
+      { id:'office_white', name:'白オフィス', type:'building', floors:[
+        { id:'1f', name:'1F', texture:'./map/textures/office_white/office_white_1f.png', mask:'./map/atarihantei/office_white/office_white_1f.png', spawn:{ x:1024, y:680 } },
+        { id:'2f', name:'2F', texture:'./map/textures/office_white/office_white_2f.png', mask:'./map/atarihantei/office_white/office_white_2f.png', spawn:{ x:1024, y:680 } },
+        { id:'rooftop', name:'屋上', texture:'./map/textures/office_white/office_white_rooftop.png', mask:'./map/atarihantei/office_white/office_white_rooftop.png', spawn:{ x:1024, y:680 } }
+      ] },
+      { id:'office_black', name:'黒オフィス', type:'building', floors:[
+        { id:'1f', name:'1F', texture:'./map/textures/office_black/office_black_1f.png', mask:'./map/atarihantei/office_black/office_black_1f.png', spawn:{ x:1024, y:680 } },
+        { id:'2f', name:'2F', texture:'./map/textures/office_black/office_black_2f.png', mask:'./map/atarihantei/office_black/office_black_2f.png', spawn:{ x:1024, y:680 } },
+        { id:'rooftop', name:'屋上', texture:'./map/textures/office_black/office_black_rooftop.png', mask:'./map/atarihantei/office_black/office_black_rooftop.png', spawn:{ x:1024, y:680 } }
+      ] },
+      { id:'cafe', name:'カフェ', type:'building', floors:[
+        { id:'1f', name:'1F', texture:'./map/textures/cafe/cafe_1f.png', mask:'./map/atarihantei/cafe/cafe_1f.png', spawn:{ x:1024, y:680 } },
+        { id:'2f', name:'2F', texture:'./map/textures/cafe/cafe_2f.png', mask:'./map/atarihantei/cafe/cafe_2f.png', spawn:{ x:1024, y:680 } },
+        { id:'rooftop', name:'屋上', texture:'./map/textures/cafe/cafe_rooftop.png', mask:'./map/atarihantei/cafe/cafe_rooftop.png', spawn:{ x:1024, y:680 } }
+      ] }
+    ];
+    const SKIN_ASSETS = {
+      airplane:'./nikori_airplane.png',
+      nikorihito:{ front:'./nikorihito_dot_front.png', behind:'./nikorihito_dot_behind.png', left:'./nikorihito_dot_left.png', right:'./nikorihito_dot_right.png' },
+      turuturu:{ front:'./turuturu_front.png', behind:'./turuturu_behind.png', left:'./turuturu_left.png', right:'./turuturu_right.png' }
+    };
+    const DRAW_HEIGHT = { nikorihito:96, turuturu:88 };
+    const AIRPLANE_HEIGHT = 220;
+    const getMapById = id => MAPS.find(map => map.id === id) || MAPS[0];
+    const getFloorById = (map, floorId) => map.type === 'building' ? (map.floors.find(floor => floor.id === floorId) || map.floors[0]) : null;
+    const getServerMapData = (mapId = 'lakeside_park', floorId = '') => {
+      const map = getMapById(mapId);
+      const floor = getFloorById(map, floorId || '1f');
+      return { map, floor, mapId:map.id, floorId:floor?.id || '', floorName:floor?.name || '', name:floor ? `${map.name} / ${floor.name}` : map.name, texture:floor?.texture || map.texture, mask:floor?.mask || map.mask, spawn:floor?.spawn || map.spawn || { x:1024, y:680 } };
+    };
 
     function toast(text){
       const item = document.createElement('div');
@@ -424,9 +467,13 @@
         const backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
         const fieldHtml = fields.map(field => {
-          const tag = field.type === 'textarea' ? 'textarea' : 'input';
-          const attrs = tag === 'textarea' ? '' : `type="${field.type || 'text'}"`;
-          return `<label>${safeText(field.label)}<${tag} ${attrs} id="modal_${field.id}" maxlength="${field.max || 120}">${tag === 'textarea' ? safeText(field.value || '') : ''}</${tag}>${tag === 'input' ? '' : ''}</label>`;
+        if (field.type === 'select') {
+          const options = (field.options || []).map(option => `<option value="${safeText(option.value)}"${option.value === field.value ? ' selected' : ''}>${safeText(option.label)}</option>`).join('');
+          return `<label>${safeText(field.label)}<select id="modal_${field.id}">${options}</select></label>`;
+        }
+        const tag = field.type === 'textarea' ? 'textarea' : 'input';
+        const attrs = tag === 'textarea' ? '' : `type="${field.type || 'text'}"`;
+        return `<label>${safeText(field.label)}<${tag} ${attrs} id="modal_${field.id}" maxlength="${field.max || 120}">${tag === 'textarea' ? safeText(field.value || '') : ''}</${tag}></label>`;
         }).join('');
         backdrop.innerHTML = `<div class="modal"><h2>${safeText(title)}</h2><div class="hint">${safeText(body || '')}</div>${fieldHtml}<div class="modal-actions"><button id="modalCancel" class="secondary" type="button">キャンセル</button><button id="modalOk" class="${danger ? 'danger' : ''}" type="button">${safeText(confirmText)}</button></div></div>`;
         root.appendChild(backdrop);
@@ -503,10 +550,11 @@
     }
 
     function clearServerSubscriptions(){
-      for (const key of ['roomsUnsub','membersUnsub','messagesUnsub','voiceUnsub','mapPlayersUnsub','mapMessagesUnsub']) if (state[key]) { state[key](); state[key] = null; }
+      for (const key of ['roomsUnsub','membersUnsub','messagesUnsub','voiceUnsub','mapPlayersUnsub','mapMessagesUnsub','mapStateUnsub']) if (state[key]) { state[key](); state[key] = null; }
       if (state.mapLoop) { cancelAnimationFrame(state.mapLoop); state.mapLoop = null; }
       state.mapKeys.clear();
       state.mapRoomId = null;
+      state.mapLocal = null;
     }
     function closeActiveServer(){
       clearServerSubscriptions();
@@ -823,7 +871,8 @@
       const roomRef = push(ref(db, `serverRooms/${serverId}`));
       const now = Date.now();
       const roomId = roomRef.key;
-      const roomData = { roomId, id:roomId, serverId, type:roomType(type), name, description, createdBy:user.uid, createdByName:userName(user), createdAt:now, updatedAt:now, order:now };
+      const mapData = type === 'map' ? { mapId:'lakeside_park', floorId:'' } : {};
+      const roomData = { roomId, id:roomId, serverId, type:roomType(type), name, description, ...mapData, createdBy:user.uid, createdByName:userName(user), createdAt:now, updatedAt:now, order:now };
       const path = `serverRooms/${serverId}/${roomId}`;
       console.log('CREATE ROOM path:', path);
       console.log('CREATE ROOM data:', roomData);
@@ -841,20 +890,30 @@
     }
     async function editRoom(room){
       if (!canOperate()) return setStatus('ルーム編集は host / operator のみ可能です。');
+      const fields = [
+        { id:'name', label:'ルーム名', value:room.name, max:28 },
+        { id:'description', label:'説明', value:room.description || '', max:120 }
+      ];
+      if (room.type === 'map') {
+        fields.splice(1, 0, { id:'mapId', label:'使用マップ', type:'select', value:room.mapId || state.mapState?.mapId || 'lakeside_park', options:MAPS.map(map => ({ value:map.id, label:map.name })) });
+      }
       const result = await modal({
         title:'ルーム編集',
         body:`${room.name} を編集します。`,
-        fields:[
-          { id:'name', label:'ルーム名', value:room.name, max:28 },
-          { id:'description', label:'説明', value:room.description || '', max:120 }
-        ]
+        fields
       });
       if (!result) return;
       const serverId = getServerId(state.activeServer);
       const roomId = room.roomId || room.id;
       const patch = { name:safeName(result.name), description:safeDescription(result.description), updatedAt:Date.now() };
+      if (room.type === 'map') {
+        const nextMap = getMapById(result.mapId || 'lakeside_park');
+        patch.mapId = nextMap.id;
+        patch.floorId = nextMap.type === 'building' ? '1f' : '';
+      }
       try {
         await update(ref(db, `serverRooms/${serverId}/${roomId}`), patch);
+        if (room.type === 'map') await update(ref(db, `serverMapState/${serverId}/${roomId}`), { mapId:patch.mapId, floorId:patch.floorId, updatedAt:Date.now() });
         setStatus('ルームを更新しました。');
       } catch (error) {
         console.error('editRoom failed', { serverId, roomId, patch }, error);
@@ -937,11 +996,23 @@
           <div class="server-map-toolbar">
             <div class="row">
               <span class="server-map-chip">WASD / 矢印キーで移動</span>
+              <span class="server-map-chip" id="serverMapNameChip">マップ読込中</span>
               <span class="server-map-chip">同期先: serverMapPlayers/${safeText(serverId)}/${safeText(roomId)}</span>
             </div>
-            <button id="serverMapFocusBtn" class="secondary small" type="button">操作を有効化</button>
+            <div class="row">
+              <button id="serverMapFlyBtn" class="secondary small" type="button">✈️ 飛行機</button>
+              <button id="serverMapFocusBtn" class="secondary small" type="button">操作を有効化</button>
+            </div>
           </div>
-          <div class="server-map-stage"><canvas id="serverMapCanvas" width="960" height="540" tabindex="0"></canvas></div>
+          <div class="server-map-stage">
+            <canvas id="serverMapCanvas" width="960" height="540" tabindex="0"></canvas>
+            <button id="floorToggleBtn" class="floor-toggle" type="button" hidden>↕</button>
+            <div id="floorPanel" class="floor-slider-panel" hidden>
+              <div class="floor-numbers"><span>1</span><span>2</span><span>3</span></div>
+              <input id="floorSlider" class="floor-slider" type="range" min="1" max="3" step="1" value="1" />
+              <div class="hint" id="floorCurrentLabel">現在: 1F</div>
+            </div>
+          </div>
           <div id="serverMapChatLog" class="server-map-chat-log"></div>
           <form id="serverMapChatForm" class="server-map-chat"><input id="serverMapChatInput" maxlength="200" placeholder="マップチャット" autocomplete="off" /><button type="submit">送信</button></form>
         </div>`;
@@ -955,19 +1026,47 @@
       const ctx = canvas.getContext('2d');
       const playerRef = ref(db, `serverMapPlayers/${serverId}/${roomId}/${user.uid}`);
       const now = Date.now();
-      const savedState = (await get(ref(db, `serverMapRooms/${serverId}/${roomId}`)).catch(() => null))?.val() || {};
+      const savedState = (await get(ref(db, `serverMapState/${serverId}/${roomId}`)).catch(() => null))?.val() || {};
+      const initialMap = getMapById(savedState.mapId || room.mapId || 'lakeside_park');
+      const initialFloor = initialMap.type === 'building' ? (savedState.floorId || room.floorId || '1f') : '';
+      const initialData = getServerMapData(initialMap.id, initialFloor);
       const me = {
         uid:user.uid,
         name:userName(user),
-        x:Number(savedState.spawnX || 480),
-        y:Number(savedState.spawnY || 270),
+        x:Number(initialData.spawn.x + Math.random() * 60),
+        y:Number(initialData.spawn.y + Math.random() * 60),
         skin:'nikorihito',
+        dir:'front',
+        flying:false,
+        mapId:initialData.mapId,
+        floorId:initialData.floorId,
         color:`hsl(${Math.floor(Math.random() * 360)} 78% 58%)`,
         updatedAt:now
       };
-      await update(ref(db, `serverMapRooms/${serverId}/${roomId}`), { roomId, serverId, updatedAt:now, mapId:savedState.mapId || 'lakeside_park', spawnX:me.x, spawnY:me.y }).catch(error => console.error('serverMapRooms init failed', error));
+      await update(ref(db, `serverMapRooms/${serverId}/${roomId}`), { roomId, serverId, updatedAt:now }).catch(error => console.error('serverMapRooms init failed', error));
+      await update(ref(db, `serverMapState/${serverId}/${roomId}`), { mapId:initialData.mapId, floorId:initialData.floorId, updatedAt:now }).catch(error => console.error('serverMapState init failed', error));
       await update(playerRef, me).catch(error => console.error('server map player init failed', error));
       onDisconnect(playerRef).remove().catch(error => console.error('server map onDisconnect failed', error));
+      const mapLocal = state.mapLocal = createServerMapLocal(canvas);
+      loadServerMapAssets(mapLocal, initialData);
+      updateServerFloorUi(serverId, roomId, initialData);
+      const stateRef = ref(db, `serverMapState/${serverId}/${roomId}`);
+      const stateCallback = snap => {
+        const nextState = snap.val() || { mapId:initialData.mapId, floorId:initialData.floorId };
+        const nextData = getServerMapData(nextState.mapId || 'lakeside_park', nextState.floorId || '');
+        const prevKey = `${mapLocal.mapId || ''}:${mapLocal.floorId || ''}`;
+        const nextKey = `${nextData.mapId}:${nextData.floorId || ''}`;
+        state.mapState = nextState;
+        if (prevKey !== nextKey) {
+          loadServerMapAssets(mapLocal, nextData);
+          mapLocal.x = nextData.spawn.x + Math.random() * 60;
+          mapLocal.y = nextData.spawn.y + Math.random() * 60;
+          update(playerRef, { x:Math.round(mapLocal.x), y:Math.round(mapLocal.y), mapId:nextData.mapId, floorId:nextData.floorId, updatedAt:Date.now() }).catch(error => console.error('server map floor reposition failed', error));
+        }
+        updateServerFloorUi(serverId, roomId, nextData);
+      };
+      onValue(stateRef, stateCallback, error => console.error('serverMapState listen failed', error));
+      state.mapStateUnsub = () => off(stateRef, 'value', stateCallback);
       const playersRef = ref(db, `serverMapPlayers/${serverId}/${roomId}`);
       const playersCallback = snap => {
         state.mapPlayers = snap.val() || {};
@@ -982,6 +1081,12 @@
       onValue(messagesRef, messagesCallback, error => console.error('serverMapMessages listen failed', error));
       state.mapMessagesUnsub = () => off(messagesRef, 'value', messagesCallback);
       $('serverMapFocusBtn').onclick = () => canvas.focus();
+      $('serverMapFlyBtn').onclick = () => {
+        const data = getServerMapData(mapLocal.mapId, mapLocal.floorId);
+        if (mapLocal.flying && !serverMapCanStandAt(mapLocal, mapLocal.x, mapLocal.y)) return setStatus('ここでは飛行機を降りられません。');
+        mapLocal.flying = !mapLocal.flying;
+        update(playerRef, { flying:mapLocal.flying, updatedAt:Date.now() }).catch(console.error);
+      };
       canvas.focus();
       const keydown = event => {
         if (state.mapRoomId !== roomId) return;
@@ -1002,23 +1107,20 @@
       state.mapPlayersUnsub = () => { cleanupKeyListeners(); off(playersRef, 'value', playersCallback); };
       if (prevPlayersUnsub && prevPlayersUnsub !== state.mapPlayersUnsub) {}
       let lastWrite = 0;
-      let px = me.x;
-      let py = me.y;
       const draw = async (time = performance.now()) => {
         if (state.mapRoomId !== roomId) return;
-        const speed = 2.4;
+        const speed = mapLocal.flying ? 5.0 : 2.6;
         let dx = 0, dy = 0;
         if (state.mapKeys.has('arrowleft') || state.mapKeys.has('a')) dx -= speed;
         if (state.mapKeys.has('arrowright') || state.mapKeys.has('d')) dx += speed;
         if (state.mapKeys.has('arrowup') || state.mapKeys.has('w')) dy -= speed;
         if (state.mapKeys.has('arrowdown') || state.mapKeys.has('s')) dy += speed;
-        px = Math.max(26, Math.min(canvas.width - 26, px + dx));
-        py = Math.max(34, Math.min(canvas.height - 26, py + dy));
+        serverMapMove(mapLocal, dx, dy);
         if ((dx || dy) && time - lastWrite > 80) {
           lastWrite = time;
-          update(playerRef, { x:Math.round(px), y:Math.round(py), name:userName(user), updatedAt:Date.now() }).catch(error => console.error('server map player update failed', error));
+          update(playerRef, { x:Math.round(mapLocal.x), y:Math.round(mapLocal.y), dir:mapLocal.dir, flying:mapLocal.flying, mapId:mapLocal.mapId, floorId:mapLocal.floorId, name:userName(user), updatedAt:Date.now() }).catch(error => console.error('server map player update failed', error));
         }
-        paintServerMap(ctx, canvas, state.mapPlayers, user.uid, px, py);
+        paintServerMap(ctx, canvas, mapLocal, state.mapPlayers, user.uid);
         state.mapLoop = requestAnimationFrame(draw);
       };
       $('serverMapChatForm').onsubmit = async event => {
@@ -1034,47 +1136,192 @@
       };
       draw();
     }
-    function paintServerMap(ctx, canvas, players, uid, fallbackX, fallbackY){
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      const grd = ctx.createLinearGradient(0,0,canvas.width,canvas.height);
-      grd.addColorStop(0,'#dcfbff');
-      grd.addColorStop(.45,'#e6fff4');
-      grd.addColorStop(1,'#f0ecff');
-      ctx.fillStyle = grd;
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.strokeStyle = 'rgba(53,185,232,.24)';
-      ctx.lineWidth = 3;
-      for (let y = 70; y < canvas.height; y += 90) {
-        ctx.beginPath();
-        for (let x = 0; x <= canvas.width; x += 24) {
-          const yy = y + Math.sin((x + y) / 54) * 12;
-          if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    function createServerMapLocal(canvas){
+      const image = new Image();
+      const mask = new Image();
+      const airplane = new Image();
+      airplane.src = SKIN_ASSETS.airplane;
+      const skins = {};
+      for (const skin of ['nikorihito','turuturu']) {
+        skins[skin] = {};
+        for (const dir of ['front','behind','left','right']) {
+          skins[skin][dir] = new Image();
+          skins[skin][dir].src = SKIN_ASSETS[skin][dir];
         }
-        ctx.stroke();
       }
-      ctx.fillStyle = 'rgba(255,255,255,.55)';
-      ctx.fillRect(80,90,220,120);
-      ctx.fillRect(610,260,210,130);
-      ctx.strokeStyle = 'rgba(79,137,168,.22)';
-      ctx.strokeRect(80,90,220,120);
-      ctx.strokeRect(610,260,210,130);
-      const merged = { ...players };
-      if (!merged[uid]) merged[uid] = { uid, name:userName(auth.currentUser), x:fallbackX, y:fallbackY, color:'#35b9e8' };
-      Object.values(merged).sort((a,b) => Number(a.y || 0) - Number(b.y || 0)).forEach(player => {
-        const x = Number(player.x || fallbackX);
-        const y = Number(player.y || fallbackY);
-        ctx.beginPath();
-        ctx.fillStyle = player.uid === uid ? '#0e9ed0' : (player.color || '#65dcc8');
-        ctx.arc(x, y, 15, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = 'rgba(255,255,255,.92)';
-        ctx.stroke();
-        ctx.font = '700 13px system-ui, sans-serif';
-        ctx.textAlign = 'center';
+      return { canvas, image, mask, airplane, skins, loaded:false, maskLoaded:false, off:null, offCtx:null, worldW:2200, worldH:1400, x:1024, y:680, dir:'front', flying:false, cameraX:0, cameraY:0, mapId:'lakeside_park', floorId:'' };
+    }
+    function loadServerMapAssets(local, data){
+      local.mapId = data.mapId;
+      local.floorId = data.floorId || '';
+      local.loaded = false;
+      local.maskLoaded = false;
+      local.off = null;
+      local.offCtx = null;
+      local.image.onload = () => {
+        local.loaded = true;
+        local.worldW = local.image.naturalWidth || 2200;
+        local.worldH = local.image.naturalHeight || 1400;
+        local.x = Math.max(20, Math.min(local.worldW - 20, local.x));
+        local.y = Math.max(20, Math.min(local.worldH - 20, local.y));
+      };
+      local.mask.onload = () => { local.maskLoaded = true; local.off = null; local.offCtx = null; };
+      local.image.onerror = () => console.warn('server map texture load failed', data.texture);
+      local.mask.onerror = () => { local.maskLoaded = false; console.warn('server map mask load failed', data.mask); };
+      local.image.src = data.texture + '?v=' + Date.now();
+      if (data.mask) local.mask.src = data.mask + '?v=' + Date.now();
+      $('serverMapNameChip').textContent = `マップ: ${data.name}`;
+    }
+    function updateServerFloorUi(serverId, roomId, data){
+      const btn = $('floorToggleBtn');
+      const panel = $('floorPanel');
+      const slider = $('floorSlider');
+      const label = $('floorCurrentLabel');
+      if (!btn || !panel || !slider || !label) return;
+      const isBuilding = data.map.type === 'building';
+      btn.hidden = !isBuilding;
+      panel.hidden = panel.hidden || !isBuilding;
+      if (!isBuilding) return;
+      const ids = ['1f','2f','rooftop'];
+      const index = Math.max(0, ids.indexOf(data.floorId || '1f'));
+      slider.value = String(index + 1);
+      label.textContent = `現在: ${data.floorName || '1F'}`;
+      btn.onclick = () => { panel.hidden = !panel.hidden; };
+      slider.oninput = () => {
+        const floorId = ids[Number(slider.value) - 1] || '1f';
+        const next = getServerMapData(data.mapId, floorId);
+        label.textContent = `現在: ${next.floorName}`;
+        update(ref(db, `serverMapState/${serverId}/${roomId}`), { mapId:data.mapId, floorId, updatedAt:Date.now() }).catch(error => {
+          console.error('server map floor update failed', error);
+          setStatus(describeError(error, '階移動に失敗しました。'));
+        });
+      };
+    }
+    function serverMapMove(local, dx, dy){
+      if (!dx && !dy) return;
+      if (Math.abs(dx) > Math.abs(dy)) local.dir = dx < 0 ? 'left' : 'right';
+      else local.dir = dy < 0 ? 'behind' : 'front';
+      const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 5));
+      const stepX = dx / steps;
+      const stepY = dy / steps;
+      for (let i = 0; i < steps; i++) {
+        const nx = Math.max(20, Math.min(local.worldW - 20, local.x + stepX));
+        const ny = Math.max(20, Math.min(local.worldH - 20, local.y + stepY));
+        if (local.flying || serverMapCanStandAt(local, nx, local.y)) local.x = nx;
+        if (local.flying || serverMapCanStandAt(local, local.x, ny)) local.y = ny;
+      }
+    }
+    function serverMapGetMaskPixel(local, x, y){
+      if (!local.maskLoaded || !local.mask.naturalWidth) return null;
+      const sx = Math.floor((x / local.worldW) * local.mask.naturalWidth);
+      const sy = Math.floor((y / local.worldH) * local.mask.naturalHeight);
+      if (sx < 0 || sy < 0 || sx >= local.mask.naturalWidth || sy >= local.mask.naturalHeight) return { r:255, g:0, b:0, a:255 };
+      try {
+        if (!local.off) {
+          local.off = document.createElement('canvas');
+          local.off.width = local.mask.naturalWidth;
+          local.off.height = local.mask.naturalHeight;
+          local.offCtx = local.off.getContext('2d', { willReadFrequently:true });
+          local.offCtx.drawImage(local.mask, 0, 0);
+        }
+        const p = local.offCtx.getImageData(sx, sy, 1, 1).data;
+        return { r:p[0], g:p[1], b:p[2], a:p[3] };
+      } catch (error) {
+        console.warn(error);
+        return null;
+      }
+    }
+    function serverMapNear(pixel, r, g, b, tolerance = 28){
+      return pixel && Math.abs(pixel.r-r)<=tolerance && Math.abs(pixel.g-g)<=tolerance && Math.abs(pixel.b-b)<=tolerance;
+    }
+    function serverMapMaskKind(local, x, y){
+      const pixel = serverMapGetMaskPixel(local, x, y);
+      if (!pixel || pixel.a < 10) return 'walkable';
+      if (serverMapNear(pixel,255,0,0)) return 'blocked';
+      if (serverMapNear(pixel,129,255,125)) return 'meeting';
+      if (serverMapNear(pixel,125,129,255)) return 'behind';
+      return 'walkable';
+    }
+    function serverMapCanStandAt(local, x, y){
+      const points = [[x,y],[x-18,y],[x+18,y],[x,y-18],[x-18,y-18],[x+18,y-18]];
+      return points.every(([px,py]) => serverMapMaskKind(local, px, py) !== 'blocked');
+    }
+    function paintServerMap(ctx, canvas, local, players, uid){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const viewW = canvas.width;
+      const viewH = canvas.height;
+      local.cameraX = Math.max(0, Math.min(local.worldW - viewW, local.x - viewW / 2));
+      local.cameraY = Math.max(0, Math.min(local.worldH - viewH, local.y - viewH / 2));
+      if (local.loaded) {
+        ctx.drawImage(local.image, local.cameraX, local.cameraY, viewW, viewH, 0, 0, viewW, viewH);
+      } else {
+        ctx.fillStyle = '#dff9ff';
+        ctx.fillRect(0,0,viewW,viewH);
         ctx.fillStyle = '#123047';
-        ctx.fillText(player.name || 'player', x, y - 23);
+        ctx.font = '900 18px system-ui';
+        ctx.fillText('マップ画像を読み込み中です', 24, 42);
+      }
+      const merged = { ...players, [uid]:{ ...(players[uid] || {}), uid, name:userName(auth.currentUser), x:local.x, y:local.y, dir:local.dir, flying:local.flying, skin:'nikorihito', mapId:local.mapId, floorId:local.floorId } };
+      Object.values(merged)
+        .filter(p => p.mapId === local.mapId && (p.floorId || '') === (local.floorId || ''))
+        .sort((a,b) => Number(a.y || 0) - Number(b.y || 0))
+        .forEach(player => {
+          drawServerMapPlayer(ctx, local, player, player.uid === uid);
       });
+      if (serverMapMaskKind(local, local.x, local.y) === 'meeting') {
+        ctx.fillStyle = 'rgba(129,255,125,.14)';
+        ctx.fillRect(0,0,viewW,viewH);
+      }
+    }
+    function drawServerMapPlayer(ctx, local, player, isMe){
+      const skin = player.skin === 'turuturu' ? 'turuturu' : 'nikorihito';
+      const dir = ['front','behind','left','right'].includes(player.dir) ? player.dir : 'front';
+      const x = Number(player.x || local.x) - local.cameraX;
+      const y = Number(player.y || local.y) - local.cameraY;
+      const behind = serverMapMaskKind(local, Number(player.x || local.x), Number(player.y || local.y)) === 'behind';
+      ctx.save();
+      ctx.globalAlpha = behind ? .48 : (isMe ? 1 : .92);
+      if (player.flying) drawServerAirplane(ctx, local, player, x, y, skin, dir);
+      else drawServerCharacter(ctx, local, x, y, skin, dir);
+      ctx.font = '900 13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const label = player.name || 'player';
+      const labelY = player.flying ? y - AIRPLANE_HEIGHT - 20 : y - (DRAW_HEIGHT[skin] || 88) - 18;
+      const width = ctx.measureText(label).width + 16;
+      ctx.fillStyle = 'rgba(255,255,255,.82)';
+      ctx.beginPath();
+      ctx.roundRect(x - width / 2, labelY - 12, width, 24, 12);
+      ctx.fill();
+      ctx.fillStyle = isMe ? '#087fa8' : '#123047';
+      ctx.fillText(label, x, labelY);
+      ctx.restore();
+    }
+    function drawServerCharacter(ctx, local, x, y, skin, dir){
+      const image = local.skins[skin]?.[dir] || local.skins.nikorihito.front;
+      const h = DRAW_HEIGHT[skin] || 88;
+      const w = image.complete && image.naturalWidth ? h * image.naturalWidth / image.naturalHeight : h;
+      if (image.complete && image.naturalWidth) ctx.drawImage(image, x - w / 2, y - h, w, h);
+      else {
+        ctx.fillStyle = skin === 'turuturu' ? '#4dd7f0' : '#fff';
+        ctx.fillRect(x - w / 2, y - h, w, h);
+      }
+    }
+    function drawServerAirplane(ctx, local, player, x, y, skin, dir){
+      const image = local.airplane;
+      const h = AIRPLANE_HEIGHT;
+      const w = image.complete && image.naturalWidth ? h * image.naturalWidth / image.naturalHeight : 240;
+      if (image.complete && image.naturalWidth) {
+        ctx.save();
+        if (dir === 'left') {
+          ctx.translate(x, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(image, -w / 2, y - h + 18, w, h);
+        } else ctx.drawImage(image, x - w / 2, y - h + 18, w, h);
+        ctx.restore();
+      }
+      const pilot = local.skins[skin]?.front;
+      if (pilot?.complete && pilot.naturalWidth) ctx.drawImage(pilot, x - 23, y - 183, 46, 46);
     }
     function renderServerMapMessages(){
       const root = $('serverMapChatLog');
