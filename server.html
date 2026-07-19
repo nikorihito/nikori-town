@@ -1295,7 +1295,7 @@
           skins[skin][dir].src = SKIN_ASSETS[skin][dir];
         }
       }
-      return { canvas, image, mask, airplane, skins, loaded:false, maskLoaded:false, off:null, offCtx:null, worldW:2200, worldH:1400, x:1024, y:680, dir:'front', flying:false, cameraX:0, cameraY:0, mapId:'lakeside_park', floorId:'' };
+      return { canvas, image, mask, airplane, skins, loaded:false, maskLoaded:false, off:null, offCtx:null, meetingOverlay:null, worldW:2200, worldH:1400, x:1024, y:680, dir:'front', flying:false, cameraX:0, cameraY:0, mapId:'lakeside_park', floorId:'' };
     }
     function resizeServerMapCanvas(local){
       const stage = local.canvas.closest('.server-map-stage');
@@ -1325,6 +1325,7 @@
       local.maskLoaded = false;
       local.off = null;
       local.offCtx = null;
+      local.meetingOverlay = null;
       local.image.onload = () => {
         local.loaded = true;
         local.worldW = local.image.naturalWidth || 2200;
@@ -1332,9 +1333,9 @@
         local.x = Math.max(20, Math.min(local.worldW - 20, local.x));
         local.y = Math.max(20, Math.min(local.worldH - 20, local.y));
       };
-      local.mask.onload = () => { local.maskLoaded = true; local.off = null; local.offCtx = null; };
+      local.mask.onload = () => { local.maskLoaded = true; local.off = null; local.offCtx = null; local.meetingOverlay = null; };
       local.image.onerror = () => console.warn('server map texture load failed', data.texture);
-      local.mask.onerror = () => { local.maskLoaded = false; console.warn('server map mask load failed', data.mask); };
+      local.mask.onerror = () => { local.maskLoaded = false; local.meetingOverlay = null; console.warn('server map mask load failed', data.mask); };
       local.image.src = data.texture + '?v=' + Date.now();
       if (data.mask) local.mask.src = data.mask + '?v=' + Date.now();
       $('serverMapNameChip').textContent = `マップ: ${data.name}`;
@@ -1413,6 +1414,55 @@
       const points = [[x,y],[x-18,y],[x+18,y],[x,y-18],[x-18,y-18],[x+18,y-18]];
       return points.every(([px,py]) => serverMapMaskKind(local, px, py) !== 'blocked');
     }
+    function serverMapMeetingOverlay(local){
+      if (!local.maskLoaded || !local.mask.naturalWidth) return null;
+      if (local.meetingOverlay) return local.meetingOverlay;
+      try {
+        const w = local.mask.naturalWidth;
+        const h = local.mask.naturalHeight;
+        const src = document.createElement('canvas');
+        src.width = w;
+        src.height = h;
+        const srcCtx = src.getContext('2d', { willReadFrequently:true });
+        srcCtx.drawImage(local.mask, 0, 0);
+        const source = srcCtx.getImageData(0, 0, w, h).data;
+        const overlay = document.createElement('canvas');
+        overlay.width = w;
+        overlay.height = h;
+        const overlayCtx = overlay.getContext('2d');
+        const imageData = overlayCtx.createImageData(w, h);
+        const pixels = imageData.data;
+        for (let i = 0; i < source.length; i += 4) {
+          if (
+            source[i + 3] >= 10 &&
+            Math.abs(source[i] - 129) <= 28 &&
+            Math.abs(source[i + 1] - 255) <= 28 &&
+            Math.abs(source[i + 2] - 125) <= 28
+          ) {
+            pixels[i] = 129;
+            pixels[i + 1] = 255;
+            pixels[i + 2] = 125;
+            pixels[i + 3] = 56;
+          }
+        }
+        overlayCtx.putImageData(imageData, 0, 0);
+        local.meetingOverlay = overlay;
+        return overlay;
+      } catch (error) {
+        console.warn('server map meeting overlay failed', error);
+        return null;
+      }
+    }
+    function drawServerMeetingOverlay(ctx, local, viewW, viewH){
+      if (serverMapMaskKind(local, local.x, local.y) !== 'meeting') return;
+      const overlay = serverMapMeetingOverlay(local);
+      if (!overlay) return;
+      const sx = (local.cameraX / local.worldW) * overlay.width;
+      const sy = (local.cameraY / local.worldH) * overlay.height;
+      const sw = (viewW / local.worldW) * overlay.width;
+      const sh = (viewH / local.worldH) * overlay.height;
+      ctx.drawImage(overlay, sx, sy, sw, sh, 0, 0, viewW, viewH);
+    }
     function paintServerMap(ctx, canvas, local, players, uid){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       const viewW = canvas.width;
@@ -1428,6 +1478,7 @@
         ctx.font = '900 18px system-ui';
         ctx.fillText('マップ画像を読み込み中です', 24, 42);
       }
+      drawServerMeetingOverlay(ctx, local, viewW, viewH);
       const merged = { ...players, [uid]:{ ...(players[uid] || {}), uid, name:userName(auth.currentUser), x:local.x, y:local.y, dir:local.dir, flying:local.flying, skin:'nikorihito', mapId:local.mapId, floorId:local.floorId } };
       Object.values(merged)
         .filter(p => p.mapId === local.mapId && (p.floorId || '') === (local.floorId || ''))
@@ -1435,10 +1486,6 @@
         .forEach(player => {
           drawServerMapPlayer(ctx, local, player, player.uid === uid);
       });
-      if (serverMapMaskKind(local, local.x, local.y) === 'meeting') {
-        ctx.fillStyle = 'rgba(129,255,125,.14)';
-        ctx.fillRect(0,0,viewW,viewH);
-      }
     }
     function drawServerMapPlayer(ctx, local, player, isMe){
       const skin = player.skin === 'turuturu' ? 'turuturu' : 'nikorihito';
