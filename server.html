@@ -390,6 +390,7 @@
         renderRooms();
         selectRoom(roomId);
       } catch (error) {
+        console.error("CREATE ROOM FAILED:", error?.code, error?.message, error);
         console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData, code:error?.code, message:error?.message }, error);
         setStatus(`${describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。')} / path: ${path}`);
       }
@@ -565,6 +566,7 @@
         const skipped = deleteResults.filter(result => !result.ok);
         setStatus(skipped.length ? `サーバーを削除しました。一部メンバー履歴の削除に失敗: ${skipped.map(item => item.path).join(', ')}` : 'サーバーを削除しました。');
       } catch (error) {
+        console.error("DELETE SERVER FAILED:", error?.code, error?.message, error);
         console.error("DELETE SERVER failed:", error);
         console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
         setStatus(`${describeError(error, 'サーバー削除に失敗しました。')} / serverId: ${serverId}`);
