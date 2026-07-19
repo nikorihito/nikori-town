@@ -1,0 +1,166 @@
+:root{
+  color-scheme:light;
+  --wave-bg:#f4fbff;
+  --wave-surface:rgba(255,255,255,.78);
+  --wave-surface-strong:rgba(255,255,255,.94);
+  --wave-line:rgba(79,137,168,.22);
+  --wave-text:#123047;
+  --wave-muted:#658096;
+  --wave-blue:#35b9e8;
+  --wave-blue-strong:#0e9ed0;
+  --wave-mint:#65dcc8;
+  --wave-violet:#b9a8ff;
+  --wave-danger:#f56f7f;
+  --wave-shadow:0 22px 60px rgba(50,122,163,.18);
+  --wave-soft-shadow:0 12px 30px rgba(50,122,163,.12);
+}
+
+body.wave-page,
+body{
+  background:
+    radial-gradient(circle at 10% 12%,rgba(101,220,200,.30),transparent 28%),
+    radial-gradient(circle at 92% 8%,rgba(185,168,255,.28),transparent 26%),
+    linear-gradient(145deg,#f9fdff 0%,#e9f8ff 42%,#f9f5ff 100%) !important;
+  color:var(--wave-text);
+}
+
+body.wave-page::before,
+body.wave-page::after,
+body:not(.room-map-page)::before,
+body:not(.room-map-page)::after{
+  content:"";
+  position:fixed;
+  left:-8vw;
+  right:-8vw;
+  height:220px;
+  pointer-events:none;
+  z-index:-1;
+  background:
+    radial-gradient(80px 36px at 6% 64%,rgba(53,185,232,.18),transparent 72%),
+    radial-gradient(120px 42px at 24% 44%,rgba(101,220,200,.22),transparent 72%),
+    radial-gradient(160px 52px at 45% 62%,rgba(185,168,255,.18),transparent 72%),
+    radial-gradient(130px 48px at 70% 46%,rgba(53,185,232,.16),transparent 72%),
+    radial-gradient(90px 36px at 91% 58%,rgba(101,220,200,.20),transparent 72%);
+}
+
+body.wave-page::before,
+body:not(.room-map-page)::before{top:86px;transform:rotate(-2deg)}
+body.wave-page::after,
+body:not(.room-map-page)::after{bottom:28px;transform:rotate(3deg);opacity:.75}
+
+.card,
+.screen,
+.skin-picker,
+.userBox,
+.history-item,
+.server-card,
+.server-app,
+.server-sidebar,
+.server-main,
+.server-right,
+.topbar .info,
+.chat,
+.people,
+.floor-panel,
+.room-copy,
+.modal,
+.panel,
+.rail,
+.rooms-pane,
+.main-pane,
+.right-pane{
+  border-color:var(--wave-line) !important;
+  background:var(--wave-surface) !important;
+  color:var(--wave-text) !important;
+  box-shadow:var(--wave-soft-shadow) !important;
+  backdrop-filter:blur(16px);
+}
+
+.card,.screen,.skin-picker,.server-app,.chat,.people,.floor-panel,.room-copy{
+  border-radius:24px !important;
+}
+
+input,textarea,select{
+  background:rgba(255,255,255,.88) !important;
+  color:var(--wave-text) !important;
+  border-color:var(--wave-line) !important;
+}
+
+input:focus,textarea:focus,select:focus{
+  border-color:rgba(53,185,232,.65) !important;
+  box-shadow:0 0 0 4px rgba(53,185,232,.14) !important;
+}
+
+button,
+.btn,
+.home-tab.active{
+  border-radius:18px !important;
+  background:linear-gradient(135deg,var(--wave-blue),var(--wave-mint)) !important;
+  color:white !important;
+  font-weight:900;
+  box-shadow:0 10px 22px rgba(14,158,208,.20) !important;
+  transition:transform .16s ease,box-shadow .16s ease,filter .16s ease;
+}
+
+button:hover,
+.btn:hover{
+  transform:translateY(-1px);
+  box-shadow:0 14px 28px rgba(14,158,208,.24) !important;
+}
+
+button.secondary,
+.btn.secondary,
+.home-tab,
+.room-create{
+  background:rgba(255,255,255,.76) !important;
+  border:1px solid var(--wave-line) !important;
+  color:var(--wave-text) !important;
+  box-shadow:none !important;
+}
+
+button.danger,
+.btn.danger,
+.server-close{
+  background:linear-gradient(135deg,var(--wave-danger),#e5485d) !important;
+  color:white !important;
+}
+
+.logo-mark,
+.server-icon,
+.brand-mark{
+  background:linear-gradient(135deg,#dff9ff,#f1edff) !important;
+  color:var(--wave-text) !important;
+}
+
+.lead,
+.notice,
+.userSub,
+.skin-picker-note,
+.history-sub,
+.server-host,
+.empty,
+.message-meta{
+  color:var(--wave-muted) !important;
+}
+
+.pill{
+  background:rgba(229,250,255,.92) !important;
+  border-color:rgba(53,185,232,.28) !important;
+  color:#087fa8 !important;
+}
+
+.message,
+.server-msg,
+.room-row,
+.info-card{
+  background:rgba(255,255,255,.76) !important;
+  border-color:var(--wave-line) !important;
+  color:var(--wave-text) !important;
+}
+
+.message-name,
+.server-msg-name,
+.info strong,
+.chat-head{
+  color:#087fa8 !important;
+}

@@ -101,6 +101,24 @@
           ".write": "auth != null"
         }
       }
+    },
+    "serverMapPlayers": {
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "serverMapMessages": {
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "serverMapState": {
+      "$serverId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
     }
   }
 }

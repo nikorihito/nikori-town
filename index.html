@@ -22,6 +22,7 @@
     .home-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 0}.home-tab{padding:9px 12px;border-radius:12px;background:#1e293b;border:1px solid var(--border);color:var(--text)}.home-tab.active{background:linear-gradient(180deg,var(--a1),var(--a2));color:#06202a;border-color:transparent}.home-panel[hidden]{display:none}
     .server-gate{padding:18px;border:1px dashed rgba(148,163,184,.34);border-radius:16px;color:var(--muted);background:rgba(15,23,42,.45)}.server-list{display:grid;gap:10px;margin-top:12px}.server-card{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:16px;background:rgba(15,23,42,.62)}.server-icon{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:#0f172a;border:1px solid rgba(148,163,184,.24);font-size:24px;object-fit:cover}.server-name{font-weight:900}.server-host{font-size:12px;color:var(--muted);margin-top:3px}.server-app{min-height:520px;display:grid;grid-template-columns:230px 1fr 170px;border:1px solid rgba(148,163,184,.22);border-radius:18px;overflow:hidden;background:rgba(2,6,23,.22)}.server-app[hidden]{display:none}.server-sidebar{background:rgba(15,23,42,.82);border-right:1px solid rgba(148,163,184,.20);padding:12px}.server-close{background:var(--danger);color:#fff;margin-bottom:10px}.server-head{display:flex;gap:9px;align-items:center;margin-bottom:12px}.room-group{margin:14px 0}.room-group-title{font-size:11px;color:var(--muted);font-weight:900;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}.room-button{width:100%;display:block;text-align:left;margin:4px 0;padding:8px 9px;border-radius:9px;background:transparent;border:0;color:#cbd5e1}.room-button.active{background:rgba(34,211,238,.16);color:#e0f2fe}.room-create{width:100%;margin:4px 0;padding:8px 9px;font-size:12px;background:#1e293b;color:var(--text);border:1px solid var(--border)}.server-main{padding:14px;min-width:0}.server-right{padding:12px;border-left:1px solid rgba(148,163,184,.20);background:rgba(15,23,42,.42)}.server-chat{height:330px;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:14px;padding:10px;background:rgba(2,6,23,.22);margin-bottom:10px}.server-msg{margin:0 0 9px;line-height:1.45}.server-msg-name{font-weight:900;color:#a5f3fc}.server-msg-meta{font-size:11px;color:var(--muted);margin-left:4px}.server-settings{margin-top:12px;padding-top:10px;border-top:1px solid rgba(148,163,184,.18)}.member-row{display:grid;grid-template-columns:1fr;gap:5px;padding:7px 0;border-bottom:1px solid rgba(148,163,184,.12);font-size:12px}.member-role{width:100%;padding:7px;border-radius:9px}@media(max-width:820px){.server-app{grid-template-columns:1fr}.server-sidebar,.server-right{border:0}.server-right{border-top:1px solid rgba(148,163,184,.20)}}
   </style>
+  <link rel="stylesheet" href="./wave-ui.css" />
 </head>
 <body>
   <main class="card">
@@ -43,6 +44,7 @@
         <label>ルーム番号<input id="roomCode" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="例）123456" autocomplete="one-time-code" /></label>
         <label>表示名<input id="playerName" maxlength="16" placeholder="例）こっぴー" autocomplete="off" /></label>
       </div>
+      <div class="row right" style="margin-top:10px"><button id="copyRoomCodeBtn" class="secondary" type="button">ルーム番号をコピー</button></div>
       <div class="home-tabs" role="tablist">
         <button type="button" class="home-tab active" data-home-tab="map">マップ</button>
         <button type="button" class="home-tab" data-home-tab="history">過去のマップ</button>
@@ -164,6 +166,17 @@
 
     function setLoginStatus(text){ $('loginStatus').textContent = text || ''; }
     function setRoomStatus(text){ $('roomStatus').textContent = text || ''; }
+    async function copyText(value, successText = 'コピーしました'){
+      const text = String(value || '').trim();
+      if (!text) return setRoomStatus('コピーする番号がありません。');
+      try {
+        await navigator.clipboard.writeText(text);
+        setRoomStatus(successText);
+      } catch (error) {
+        console.error('copy failed', error);
+        setRoomStatus('コピーに失敗しました。');
+      }
+    }
     function safeRoom(raw){ return String(raw || '').trim().toLowerCase().replace(/[.#$/\[\]\/]/g,'-').replace(/[^\w\-ぁ-んァ-ヶ一-龠]/g,'-').replace(/-+/g,'-').slice(0,32); }
     function safeRoomCode(raw){ return String(raw || '').replace(/\D/g, '').slice(0, 6); }
     function isRoomCode(value){ return /^\d{6}$/.test(String(value || '')); }
@@ -1199,6 +1212,7 @@
     $('serverJoinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinServerByCode(); });
     $('roomCode').addEventListener('input', e => { e.target.value = safeRoomCode(e.target.value); });
     $('roomCode').addEventListener('keydown', e => { if (e.key === 'Enter') enterRoom(); });
+    $('copyRoomCodeBtn').addEventListener('click', () => copyText($('roomCode').value, 'ルーム番号をコピーしました。'));
     $('playerName').addEventListener('keydown', e => { if (e.key === 'Enter') enterRoom(); });
     $('guestName').addEventListener('keydown', e => { if (e.key === 'Enter') loginGuest(); });
     initSkinPicker();
