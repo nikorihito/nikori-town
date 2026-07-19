@@ -352,7 +352,12 @@
       if (!canOperate()) return;
       for (const [type,label] of [['chat','+ チャットルーム作成'],['map','+ マップルーム作成'],['voice','+ ボイスルーム作成']]) {
         const btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'room-create'; btn.textContent = label; btn.onclick = () => createRoom(type);
+        btn.type = 'button'; btn.className = 'room-create'; btn.textContent = label; btn.onclick = () => {
+          if (type === 'chat') console.log("CLICK create chat room");
+          if (type === 'map') console.log("CLICK create map room");
+          if (type === 'voice') console.log("CLICK create voice room");
+          createRoom(type);
+        };
         root.appendChild(btn);
       }
     }
@@ -497,21 +502,26 @@
       root.innerHTML = '';
       if (!canDeleteServer()) return;
       root.innerHTML = '<div class="section-title">危険な操作</div><div class="empty">サーバー本体と関連データを完全に削除します。この操作は元に戻せません。</div><button id="deleteServerBtn" class="danger" type="button" style="margin-top:8px">サーバーを削除</button>';
-      $('deleteServerBtn').onclick = deleteActiveServer;
+      $('deleteServerBtn').onclick = () => {
+        console.log("CLICK delete server");
+        deleteActiveServer();
+      };
     }
     async function deleteActiveServer(){
       const user = auth.currentUser;
-      const server = state.activeServer;
-      const serverId = getServerId(server);
-      if (!user || !server) return;
+      const activeServer = state.activeServer;
+      const serverId = getServerId(activeServer);
+      if (!user || !activeServer) return;
+      console.log("DELETE SERVER activeServer:", activeServer);
       console.log("DELETE SERVER serverId:", serverId);
-      console.log("DELETE SERVER hostUid:", server.hostUid);
+      console.log("DELETE SERVER hostUid:", activeServer.hostUid);
+      console.log("DELETE SERVER currentUid:", auth.currentUser?.uid);
       console.log("DELETE SERVER current uid:", user.uid);
-      if (server.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
-      const message = `このサーバー「${server.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
+      if (activeServer.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
+      const message = `このサーバー「${activeServer.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
       if (!confirm(message)) return;
       const typed = prompt('削除するにはサーバー名を入力してください', '');
-      if (typed !== (server.name || 'サーバー')) return setStatus('サーバー名が一致しないため、削除を中止しました。');
+      if (typed !== (activeServer.name || 'サーバー')) return setStatus('サーバー名が一致しないため、削除を中止しました。');
       $('deleteServerBtn').disabled = true;
       setStatus('サーバーを削除しています...');
       try {

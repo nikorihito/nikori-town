@@ -624,7 +624,12 @@
         btn.type = 'button';
         btn.className = 'room-create';
         btn.textContent = label;
-        btn.onclick = () => createServerRoom(type);
+        btn.onclick = () => {
+          if (type === 'chat') console.log("CLICK create chat room");
+          if (type === 'map') console.log("CLICK create map room");
+          if (type === 'voice') console.log("CLICK create voice room");
+          createServerRoom(type);
+        };
         root.appendChild(btn);
       }
       if (serverState.activeRoom) {
