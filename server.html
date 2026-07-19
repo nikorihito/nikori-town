@@ -225,6 +225,12 @@
     .voice-room{display:grid;gap:16px}
     .voice-controls{display:flex;gap:10px;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.70)}
     .voice-members{display:grid;gap:10px}
+    .voice-preview-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+    .voice-preview{min-height:170px;border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.72);overflow:hidden;display:grid;place-items:center;position:relative}
+    .voice-preview video{width:100%;height:100%;min-height:170px;object-fit:cover;background:#123047}
+    .voice-preview .empty{padding:18px;text-align:center;color:var(--muted);font-weight:850}
+    .voice-error{padding:10px 12px;border:1px solid rgba(245,111,127,.34);border-radius:16px;background:rgba(255,235,238,.82);color:#9f2434;font-weight:850}
+    .voice-error[hidden]{display:none}
     .server-map-wrap{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;gap:10px;min-height:0;flex:1}
     .server-map-embed{display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;min-height:0;flex:1}
     .server-map-lobby{display:grid;place-items:center;min-height:420px;text-align:center}
@@ -396,6 +402,7 @@
       mapMessages:[],
       mapState:{},
       mapLocal:null,
+      voiceLocal:null,
       activeServer:null,
       activeMember:null,
       activeRoom:null,
@@ -623,6 +630,7 @@
     }
 
     function clearServerSubscriptions(){
+      stopVoiceTracks({ removeState:true });
       for (const key of ['roomsUnsub','membersUnsub','messagesUnsub','voiceUnsub','mapPlayersUnsub','mapMessagesUnsub','mapStateUnsub']) if (state[key]) { state[key](); state[key] = null; }
       if (state.mapLoop) { cancelAnimationFrame(state.mapLoop); state.mapLoop = null; }
       if (state.mapResizeObserver) { state.mapResizeObserver.disconnect(); state.mapResizeObserver = null; }
@@ -1044,6 +1052,7 @@
       const room = state.rooms?.[id];
       if (!room) return;
       if (state.activeRoom?.type === 'map') leaveServerMapRoom(state.activeRoom, false);
+      if (state.activeRoom?.type === 'voice') stopVoiceTracks({ removeState:true });
       state.activeRoom = room;
       renderRooms();
       if (state.messagesUnsub) { state.messagesUnsub(); state.messagesUnsub = null; }
@@ -1056,7 +1065,7 @@
       state.mapKeys.clear();
       updateActiveRoomHeader();
       if (room.type === 'chat') renderChat(room);
-      if (room.type === 'voice') renderVoice(room);
+      if (room.type === 'voice') renderVoiceMedia(room);
       if (room.type === 'map') renderMapRoom(room);
     }
     function updateActiveRoomHeader(){
@@ -1700,6 +1709,231 @@
         setStatus(describeError(error, 'メッセージ削除に失敗しました。'));
       }
     }
+    function stopVoiceTracks({ removeState = false } = {}){
+      const local = state.voiceLocal;
+      if (!local) return Promise.resolve();
+      for (const stream of [local.micStream, local.cameraStream, local.screenStream]) {
+        if (!stream) continue;
+        for (const track of stream.getTracks()) track.stop();
+      }
+      const voicePath = local.voicePath;
+      const uid = auth.currentUser?.uid;
+      state.voiceLocal = null;
+      if (removeState && voicePath && uid) {
+        return remove(ref(db, `${voicePath}/${uid}`)).catch(error => {
+          console.error('voice leave cleanup failed', error);
+        });
+      }
+      return Promise.resolve();
+    }
+    function renderVoiceMedia(room){
+      stopVoiceTracks({ removeState:false });
+      $('serverRoomContent').innerHTML = `
+        <div class="voice-room">
+          <div class="info-card">
+            <div class="section-title">🔊 ボイスルーム</div>
+            <div class="hint">入室後に、マイク・カメラ・画面共有を個別にON/OFFできます。</div>
+          </div>
+          <div id="voiceError" class="voice-error" hidden></div>
+          <div class="voice-controls">
+            <button id="voiceJoinBtn" type="button">入室</button>
+            <button id="voiceMicBtn" class="secondary" type="button" disabled>マイクON</button>
+            <button id="voiceCameraBtn" class="secondary" type="button" disabled>カメラON</button>
+            <button id="voiceScreenBtn" class="secondary" type="button" disabled>画面共有ON</button>
+            <button id="voiceLeaveBtn" class="secondary" type="button" disabled>退出</button>
+          </div>
+          <div class="voice-preview-grid">
+            <div class="voice-preview"><video id="voiceCameraPreview" autoplay playsinline muted hidden></video><div id="voiceCameraEmpty" class="empty">カメラOFF</div></div>
+            <div class="voice-preview"><video id="voiceScreenPreview" autoplay playsinline muted hidden></video><div id="voiceScreenEmpty" class="empty">画面共有OFF</div></div>
+          </div>
+          <div id="voiceMembers" class="voice-members"></div>
+        </div>`;
+      const serverId = getServerId(state.activeServer);
+      const roomId = room.roomId || room.id;
+      const voicePath = `serverVoiceState/${serverId}/${roomId}`;
+      const uid = auth.currentUser.uid;
+      const userRef = ref(db, `${voicePath}/${uid}`);
+      const setVoiceError = text => {
+        const el = $('voiceError');
+        if (!el) return;
+        el.textContent = text || '';
+        el.hidden = !text;
+      };
+      const updateVoice = async patch => update(userRef, {
+        uid,
+        name:userName(auth.currentUser),
+        joinedAt:state.voiceLocal?.joinedAt || Date.now(),
+        updatedAt:Date.now(),
+        ...patch
+      });
+      const refreshVoiceUi = () => {
+        const local = state.voiceLocal;
+        const joined = Boolean(local?.joined);
+        const micOn = Boolean(local?.micTrack && local.micTrack.readyState === 'live' && local.micTrack.enabled);
+        const camOn = Boolean(local?.cameraTrack && local.cameraTrack.readyState === 'live' && local.cameraTrack.enabled);
+        const screenOn = Boolean(local?.screenTrack && local.screenTrack.readyState === 'live');
+        $('voiceJoinBtn').disabled = joined;
+        $('voiceMicBtn').disabled = !joined;
+        $('voiceCameraBtn').disabled = !joined;
+        $('voiceScreenBtn').disabled = !joined;
+        $('voiceLeaveBtn').disabled = !joined;
+        $('voiceMicBtn').textContent = micOn ? 'マイクOFF' : 'マイクON';
+        $('voiceCameraBtn').textContent = camOn ? 'カメラOFF' : 'カメラON';
+        $('voiceScreenBtn').textContent = screenOn ? '画面共有OFF' : '画面共有ON';
+        const cameraVideo = $('voiceCameraPreview');
+        const cameraEmpty = $('voiceCameraEmpty');
+        const screenVideo = $('voiceScreenPreview');
+        const screenEmpty = $('voiceScreenEmpty');
+        if (cameraVideo && cameraEmpty) {
+          cameraVideo.hidden = !camOn;
+          cameraEmpty.hidden = camOn;
+        }
+        if (screenVideo && screenEmpty) {
+          screenVideo.hidden = !screenOn;
+          screenEmpty.hidden = screenOn;
+        }
+      };
+      const ensureJoined = async () => {
+        if (!state.voiceLocal) {
+          state.voiceLocal = { voicePath, joined:false, joinedAt:Date.now(), micStream:null, micTrack:null, cameraStream:null, cameraTrack:null, screenStream:null, screenTrack:null };
+        }
+        state.voiceLocal.voicePath = voicePath;
+        if (!state.voiceLocal.joined) {
+          state.voiceLocal.joined = true;
+          await updateVoice({ micEnabled:false, cameraEnabled:false, screenSharing:false });
+          onDisconnect(userRef).remove();
+        }
+        refreshVoiceUi();
+      };
+      const stopLocalStream = key => {
+        const local = state.voiceLocal;
+        const stream = local?.[key];
+        if (!stream) return;
+        for (const track of stream.getTracks()) track.stop();
+        local[key] = null;
+      };
+      $('voiceJoinBtn').onclick = async () => {
+        try {
+          setVoiceError('');
+          await ensureJoined();
+        } catch (error) {
+          console.error('voice join failed', error);
+          setVoiceError(describeError(error, 'ボイスルーム入室に失敗しました。'));
+        }
+      };
+      $('voiceMicBtn').onclick = async () => {
+        try {
+          setVoiceError('');
+          await ensureJoined();
+          const local = state.voiceLocal;
+          const active = local.micTrack && local.micTrack.readyState === 'live';
+          if (active && local.micTrack.enabled) {
+            local.micTrack.enabled = false;
+            await updateVoice({ micEnabled:false });
+          } else {
+            if (!active) {
+              local.micStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+              local.micTrack = local.micStream.getAudioTracks()[0];
+            }
+            local.micTrack.enabled = true;
+            await updateVoice({ micEnabled:true });
+          }
+          refreshVoiceUi();
+        } catch (error) {
+          console.error('microphone enable failed', error);
+          setVoiceError(describeError(error, 'マイクを使えませんでした。権限や接続を確認してください。'));
+          await updateVoice({ micEnabled:false }).catch(console.warn);
+          refreshVoiceUi();
+        }
+      };
+      $('voiceCameraBtn').onclick = async () => {
+        try {
+          setVoiceError('');
+          await ensureJoined();
+          const local = state.voiceLocal;
+          const active = local.cameraTrack && local.cameraTrack.readyState === 'live';
+          if (active && local.cameraTrack.enabled) {
+            local.cameraTrack.enabled = false;
+            await updateVoice({ cameraEnabled:false });
+          } else {
+            if (!active) {
+              local.cameraStream = await navigator.mediaDevices.getUserMedia({ video:true });
+              local.cameraTrack = local.cameraStream.getVideoTracks()[0];
+              $('voiceCameraPreview').srcObject = local.cameraStream;
+            }
+            local.cameraTrack.enabled = true;
+            await updateVoice({ cameraEnabled:true });
+          }
+          refreshVoiceUi();
+        } catch (error) {
+          console.error('camera enable failed', error);
+          setVoiceError(describeError(error, 'カメラを使えませんでした。権限や接続を確認してください。'));
+          await updateVoice({ cameraEnabled:false }).catch(console.warn);
+          refreshVoiceUi();
+        }
+      };
+      $('voiceScreenBtn').onclick = async () => {
+        try {
+          setVoiceError('');
+          await ensureJoined();
+          const local = state.voiceLocal;
+          const active = local.screenTrack && local.screenTrack.readyState === 'live';
+          if (active) {
+            stopLocalStream('screenStream');
+            local.screenTrack = null;
+            $('voiceScreenPreview').srcObject = null;
+            await updateVoice({ screenSharing:false });
+          } else {
+            local.screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true });
+            local.screenTrack = local.screenStream.getVideoTracks()[0];
+            $('voiceScreenPreview').srcObject = local.screenStream;
+            local.screenTrack.onended = async () => {
+              if (state.voiceLocal) {
+                state.voiceLocal.screenStream = null;
+                state.voiceLocal.screenTrack = null;
+              }
+              if ($('voiceScreenPreview')) $('voiceScreenPreview').srcObject = null;
+              await updateVoice({ screenSharing:false }).catch(error => console.error('screen share ended update failed', error));
+              refreshVoiceUi();
+            };
+            await updateVoice({ screenSharing:true });
+          }
+          refreshVoiceUi();
+        } catch (error) {
+          console.error('screen share failed', error);
+          setVoiceError(describeError(error, '画面共有を開始できませんでした。'));
+          await updateVoice({ screenSharing:false }).catch(console.warn);
+          refreshVoiceUi();
+        }
+      };
+      $('voiceLeaveBtn').onclick = async () => {
+        try {
+          setVoiceError('');
+          await stopVoiceTracks({ removeState:true });
+          refreshVoiceUi();
+        } catch (error) {
+          console.error('voice leave failed', error);
+          setVoiceError(describeError(error, '退出に失敗しました。'));
+        }
+      };
+      refreshVoiceUi();
+      const voiceRef = ref(db, voicePath);
+      const callback = snap => {
+        const root = $('voiceMembers');
+        if (!root) return;
+        root.innerHTML = '';
+        const people = Object.values(snap.val() || {});
+        if (!people.length) root.innerHTML = '<div class="empty">まだ誰も入室していません。</div>';
+        for (const item of people) {
+          const row = document.createElement('div');
+          row.className = 'server-card';
+          row.innerHTML = `<div class="server-icon">🔊</div><div><div class="server-name">${safeText(memberName(state.members[item.uid] || item))}</div><div class="server-host">mic:${item.micEnabled?'on':'off'} / cam:${item.cameraEnabled?'on':'off'} / screen:${item.screenSharing?'on':'off'}</div></div>`;
+          root.appendChild(row);
+        }
+      };
+      onValue(voiceRef, callback, error => console.error('serverVoiceState onValue failed', error));
+      state.voiceUnsub = () => off(voiceRef, 'value', callback);
+    }
     function renderVoice(room){
       $('serverRoomContent').innerHTML = '<div class="voice-room"><div class="info-card"><div class="section-title">🔊 ボイスルーム</div><div class="hint">同じボイスルームにいるメンバーの状態を表示します。</div></div><div class="voice-controls"><button id="voiceJoinBtn" type="button">入室</button><button id="voiceMicBtn" class="secondary" type="button">マイクON</button><button id="voiceCameraBtn" class="secondary" type="button">カメラON</button><button id="voiceScreenBtn" class="secondary" type="button">画面共有ON</button><button id="voiceLeaveBtn" class="secondary" type="button">退出</button></div><div id="voiceMembers" class="voice-members"></div></div>';
       const serverId = getServerId(state.activeServer);
@@ -1914,6 +2148,7 @@
     $('serverJoinCode').addEventListener('input', event => event.target.value = safeCode(event.target.value));
     $('serverJoinCode').addEventListener('keydown', event => { if (event.key === 'Enter') joinServer(); });
     window.addEventListener('beforeunload', () => {
+      stopVoiceTracks({ removeState:false });
       if (state.activeRoom?.type === 'map') leaveServerMapRoom(state.activeRoom, false);
     });
     onAuthStateChanged(auth, showForUser);
