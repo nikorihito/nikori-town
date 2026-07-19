@@ -140,10 +140,13 @@
           console.error('servers lookup by serverCodes failed', { path:`servers/${codeData.serverId}`, code }, error);
           throw error;
         }))?.val();
-        if (server?.joinCode === code && server?.joinCodeDate === todayKey()) return server;
+        if (server?.joinCode === code && server?.joinCodeDate === todayKey()) return { ...server, serverId:codeData.serverId, id:codeData.serverId };
       }
       const snap = await get(dbQuery(ref(db, 'servers'), orderByChild('joinCode'), equalTo(code)));
-      return Object.values(snap.val() || {}).find(server => server?.joinCode === code && server?.joinCodeDate === todayKey()) || null;
+      for (const [serverId, server] of Object.entries(snap.val() || {})) {
+        if (server?.joinCode === code && server?.joinCodeDate === todayKey()) return { ...server, serverId, id:serverId };
+      }
+      return null;
     }
     async function reserveJoinCode(id, uid, date = todayKey()){
       for (let i = 0; i < 50; i++) {
@@ -216,8 +219,9 @@
         const server = await findServerByJoinCode(code);
         if (!server) return setStatus('サーバーが見つかりません。参加コードが古い可能性があります。');
         const now = Date.now();
-        await writeStep('serverMembers join write', `serverMembers/${server.id}/${user.uid}`, () => update(ref(db, `serverMembers/${server.id}/${user.uid}`), { uid:user.uid, name:userName(user), role:server.hostUid === user.uid ? 'operator' : 'member', joinedAt:now, updatedAt:now }));
-        await writeStep('userServers join write', `userServers/${user.uid}/${server.id}`, () => update(ref(db, `userServers/${user.uid}/${server.id}`), { serverId:server.id, joinedAt:now, lastOpenedAt:now }));
+        const serverId = getServerId(server);
+        await writeStep('serverMembers join write', `serverMembers/${serverId}/${user.uid}`, () => update(ref(db, `serverMembers/${serverId}/${user.uid}`), { uid:user.uid, name:userName(user), role:server.hostUid === user.uid ? 'operator' : 'member', joinedAt:now, updatedAt:now }));
+        await writeStep('userServers join write', `userServers/${user.uid}/${serverId}`, () => update(ref(db, `userServers/${user.uid}/${serverId}`), { serverId, joinedAt:now, lastOpenedAt:now }));
         subscribeUserServers(user);
         setStatus('サーバーに参加しました。');
       } catch(error) {
@@ -384,8 +388,8 @@
         renderRooms();
         selectRoom(roomId);
       } catch (error) {
-        console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData }, error);
-        setStatus(describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
+        console.error('create server room failed', { activeServer, serverId, roomId, type, path, roomData, code:error?.code, message:error?.message }, error);
+        setStatus(`${describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。')} / path: ${path}`);
       }
     }
     function selectRoom(id){
@@ -548,7 +552,7 @@
       } catch (error) {
         console.error("DELETE SERVER failed:", error);
         console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
-        setStatus(describeError(error, 'サーバー削除に失敗しました。'));
+        setStatus(`${describeError(error, 'サーバー削除に失敗しました。')} / serverId: ${serverId}`);
       } finally {
         const btn = $('deleteServerBtn');
         if (btn) btn.disabled = false;
