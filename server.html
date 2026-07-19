@@ -1126,7 +1126,8 @@
             class="server-map-frame"
             title="${safeText(room.name)}"
             src="./room.html?${mapParams.toString()}"
-            allow="clipboard-write; microphone; camera; display-capture"
+            allow="clipboard-write; microphone; camera; display-capture; fullscreen"
+            allowfullscreen
           ></iframe>
         </div>`;
       $('serverMapLeaveBtn').onclick = () => leaveServerMapRoom(room, true);

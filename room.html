@@ -88,7 +88,7 @@
       flex-wrap: wrap;
       justify-content: flex-end;
       gap: 8px;
-      max-width: 180px;
+      max-width: min(330px, 45vw);
     }
 
     body.embedded-room #helpLabel {
@@ -195,6 +195,25 @@
       display: flex;
       gap: 8px;
       pointer-events: auto;
+    }
+
+    .zoom-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(2, 6, 23, 0.48);
+      backdrop-filter: blur(10px);
+    }
+
+    .zoom-actions .btn {
+      min-width: 36px;
+      min-height: 34px;
+      padding: 7px 9px;
+      border-radius: 12px;
+      font-size: 12px;
     }
 
     .btn {
@@ -627,6 +646,11 @@
         max-width: 132px;
       }
 
+      body.embedded-room .zoom-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       body.embedded-room .chat {
         left: 8px;
         right: auto;
@@ -654,6 +678,12 @@
     <div class="top-actions">
       <button id="helpToggleBtn" class="btn secondary embedded-only" type="button" aria-label="help">?</button>
       <button id="flyBtn" class="btn secondary" type="button">✈️ 飛行機</button>
+      <div class="zoom-actions" aria-label="マップズーム">
+        <button id="zoomOutBtn" class="btn secondary" type="button" aria-label="縮小">−</button>
+        <button id="zoomInBtn" class="btn secondary" type="button" aria-label="拡大">＋</button>
+        <button id="zoomResetBtn" class="btn secondary" type="button">1x</button>
+        <button id="fullscreenBtn" class="btn secondary" type="button">全画面</button>
+      </div>
       <button id="menuBtn" class="btn" type="button">メニュー</button>
     </div>
   </div>
@@ -799,6 +829,10 @@
     const helpLabel = document.getElementById("helpLabel");
     const helpToggleBtn = document.getElementById("helpToggleBtn");
     const flyBtn = document.getElementById("flyBtn");
+    const zoomInBtn = document.getElementById("zoomInBtn");
+    const zoomOutBtn = document.getElementById("zoomOutBtn");
+    const zoomResetBtn = document.getElementById("zoomResetBtn");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
     const menuBtn = document.getElementById("menuBtn");
     const menuBackdrop = document.getElementById("menuBackdrop");
     const closeMenuBtn = document.getElementById("closeMenuBtn");
@@ -1048,6 +1082,9 @@
 
     const WALK_SPEED = 400;
     const FLY_SPEED = WALK_SPEED * 2;
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 3;
+    const ZOOM_STEP = 0.15;
 
     /*
       飛行機サイズ。
@@ -1075,7 +1112,8 @@
 
     const camera = {
       x: 0,
-      y: 0
+      y: 0,
+      zoom: 1
     };
 
     const keys = {
@@ -1194,9 +1232,14 @@
       canvas.width = Math.floor(window.innerWidth * dpr);
       canvas.height = Math.floor(window.innerHeight * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      updateZoomButtonState();
     }
 
     window.addEventListener("resize", resizeCanvas);
+    document.addEventListener("fullscreenchange", () => {
+      resizeCanvas();
+      updateZoomButtonState();
+    });
     resizeCanvas();
 
     function safeName(value) {
@@ -1428,6 +1471,45 @@
       }
     }
 
+    function updateZoomButtonState() {
+      zoomResetBtn.textContent = `${Math.round(camera.zoom * 100)}%`;
+      zoomOutBtn.disabled = camera.zoom <= MIN_ZOOM + 0.001;
+      zoomInBtn.disabled = camera.zoom >= MAX_ZOOM - 0.001;
+      fullscreenBtn.textContent = document.fullscreenElement ? "戻る" : "全画面";
+    }
+
+    function setZoom(nextZoom, anchorX = window.innerWidth / 2, anchorY = window.innerHeight / 2) {
+      const previousZoom = camera.zoom;
+      const zoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+      if (Math.abs(zoom - previousZoom) < 0.001) {
+        updateZoomButtonState();
+        return;
+      }
+
+      const worldX = camera.x + anchorX / previousZoom;
+      const worldY = camera.y + anchorY / previousZoom;
+      camera.zoom = zoom;
+      const vw = window.innerWidth / camera.zoom;
+      const vh = window.innerHeight / camera.zoom;
+      camera.x = clamp(worldX - anchorX / camera.zoom, 0, Math.max(0, state.worldW - vw));
+      camera.y = clamp(worldY - anchorY / camera.zoom, 0, Math.max(0, state.worldH - vh));
+      updateZoomButtonState();
+    }
+
+    async function toggleFullscreen() {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } catch (error) {
+        console.error("toggle fullscreen failed", error);
+      } finally {
+        updateZoomButtonState();
+      }
+    }
+
     function leaveRoom() {
       location.href = "./index.html";
     }
@@ -1527,6 +1609,14 @@
     closeMenuBtn.addEventListener("click", closeMenu);
     copyRoomBtn.addEventListener("click", copyRoomName);
     flyBtn.addEventListener("click", toggleFlying);
+    zoomInBtn.addEventListener("click", () => setZoom(camera.zoom + ZOOM_STEP));
+    zoomOutBtn.addEventListener("click", () => setZoom(camera.zoom - ZOOM_STEP));
+    zoomResetBtn.addEventListener("click", () => setZoom(1));
+    fullscreenBtn.addEventListener("click", toggleFullscreen);
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      setZoom(camera.zoom + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP), event.clientX, event.clientY);
+    }, { passive: false });
     helpToggleBtn.addEventListener("click", () => {
       helpLabel.hidden = !helpLabel.hidden;
     });
@@ -2071,8 +2161,8 @@
     }
 
     function updateCamera() {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      const vw = window.innerWidth / camera.zoom;
+      const vh = window.innerHeight / camera.zoom;
 
       camera.x = clamp(player.x - vw / 2, 0, Math.max(0, state.worldW - vw));
       camera.y = clamp(player.y - vh / 2, 0, Math.max(0, state.worldH - vh));
@@ -2122,14 +2212,16 @@
     function drawMap() {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
+      const sourceW = vw / camera.zoom;
+      const sourceH = vh / camera.zoom;
 
       if (state.mapLoaded) {
         ctx.drawImage(
           images.map,
           camera.x,
           camera.y,
-          vw,
-          vh,
+          sourceW,
+          sourceH,
           0,
           0,
           vw,
@@ -2145,17 +2237,17 @@
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.lineWidth = 1;
 
-      const startX = -camera.x % gridSize;
-      const startY = -camera.y % gridSize;
+      const startX = (-camera.x * camera.zoom) % (gridSize * camera.zoom);
+      const startY = (-camera.y * camera.zoom) % (gridSize * camera.zoom);
 
-      for (let x = startX; x < vw; x += gridSize) {
+      for (let x = startX; x < vw; x += gridSize * camera.zoom) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, vh);
         ctx.stroke();
       }
 
-      for (let y = startY; y < vh; y += gridSize) {
+      for (let y = startY; y < vh; y += gridSize * camera.zoom) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(vw, y);
@@ -2180,8 +2272,8 @@
       const dir = normalizeDir(p.dir);
       const flying = Boolean(p.flying);
 
-      const sx = p.x - camera.x;
-      const sy = p.y - camera.y;
+      const sx = (p.x - camera.x) * camera.zoom;
+      const sy = (p.y - camera.y) * camera.zoom;
 
       ctx.save();
 
@@ -2203,11 +2295,11 @@
       const image = images.airplane;
       const dir = normalizeDir(p.dir);
 
-      let w = 240;
-      let h = AIRPLANE_HEIGHT;
+      let w = 240 * camera.zoom;
+      let h = AIRPLANE_HEIGHT * camera.zoom;
 
       if (image.complete && image.naturalWidth) {
-        h = AIRPLANE_HEIGHT;
+        h = AIRPLANE_HEIGHT * camera.zoom;
         w = h * image.naturalWidth / image.naturalHeight;
 
         ctx.save();
@@ -2220,25 +2312,25 @@
         if (dir === "left") {
           ctx.translate(sx, 0);
           ctx.scale(-1, 1);
-          ctx.drawImage(image, -w / 2, sy - h + 18, w, h);
+          ctx.drawImage(image, -w / 2, sy - h + 18 * camera.zoom, w, h);
         } else {
-          ctx.drawImage(image, sx - w / 2, sy - h + 18, w, h);
+          ctx.drawImage(image, sx - w / 2, sy - h + 18 * camera.zoom, w, h);
         }
 
         ctx.restore();
       } else {
         ctx.fillStyle = "#e0f2fe";
         ctx.beginPath();
-        ctx.ellipse(sx, sy - 105, 120, 48, 0, 0, Math.PI * 2);
+        ctx.ellipse(sx, sy - 105 * camera.zoom, 120 * camera.zoom, 48 * camera.zoom, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "#0f172a";
-        ctx.fillRect(sx - 18, sy - 135, 36, 36);
+        ctx.fillRect(sx - 18 * camera.zoom, sy - 135 * camera.zoom, 36 * camera.zoom, 36 * camera.zoom);
       }
     }
 
     function drawTinyPilot(skin, sx, sy) {
       const image = images.skins[skin]?.front;
-      const h = skin === "turuturu" ? 42 : 46;
+      const h = (skin === "turuturu" ? 42 : 46) * camera.zoom;
       const w = h;
 
       if (image && image.complete && image.naturalWidth) {
@@ -2248,7 +2340,7 @@
 
     function drawCharacter(skin, dir, sx, sy) {
       const image = images.skins[skin]?.[dir] || images.skins.nikorihito.front;
-      const h = DRAW_HEIGHT[skin] || DRAW_HEIGHT.nikorihito;
+      const h = (DRAW_HEIGHT[skin] || DRAW_HEIGHT.nikorihito) * camera.zoom;
 
       let w = h;
 
@@ -2259,31 +2351,33 @@
         ctx.fillStyle = skin === "turuturu" ? "#4dd7f0" : "#ffffff";
         ctx.fillRect(sx - w / 2, sy - h, w, h);
         ctx.strokeStyle = "#0f172a";
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 3 * camera.zoom;
         ctx.strokeRect(sx - w / 2, sy - h, w, h);
       }
 
       ctx.globalAlpha *= 0.28;
       ctx.fillStyle = "#000000";
       ctx.beginPath();
-      ctx.ellipse(sx, sy + 3, Math.max(14, w * 0.35), 7, 0, 0, Math.PI * 2);
+      ctx.ellipse(sx, sy + 3 * camera.zoom, Math.max(14 * camera.zoom, w * 0.35), 7 * camera.zoom, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
     function drawName(p, sx, sy, flying) {
-      const y = flying ? sy - AIRPLANE_HEIGHT - 20 : sy - (DRAW_HEIGHT[normalizeSkin(p.skin)] || 70) - 18;
+      const y = flying
+        ? sy - (AIRPLANE_HEIGHT + 20) * camera.zoom
+        : sy - ((DRAW_HEIGHT[normalizeSkin(p.skin)] || 70) + 18) * camera.zoom;
 
-      ctx.font = "900 13px system-ui, sans-serif";
+      ctx.font = `900 ${Math.max(11, 13 * camera.zoom)}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
       const text = nameWithHostCrown(p.name, p.uid, p.isHost);
       const metrics = ctx.measureText(text);
-      const width = metrics.width + 16;
+      const width = metrics.width + 16 * camera.zoom;
 
       ctx.fillStyle = "rgba(2,6,23,0.68)";
-      roundRect(ctx, sx - width / 2, y - 12, width, 24, 12);
+      roundRect(ctx, sx - width / 2, y - 12 * camera.zoom, width, 24 * camera.zoom, 12 * camera.zoom);
       ctx.fill();
 
       ctx.fillStyle = p.uid === player.uid ? "#a5f3fc" : "#e2e8f0";
@@ -2295,9 +2389,11 @@
         return;
       }
 
-      const y = flying ? sy - AIRPLANE_HEIGHT - 54 : sy - (DRAW_HEIGHT[normalizeSkin(p.skin)] || 70) - 50;
+      const y = flying
+        ? sy - (AIRPLANE_HEIGHT + 54) * camera.zoom
+        : sy - ((DRAW_HEIGHT[normalizeSkin(p.skin)] || 70) + 50) * camera.zoom;
 
-      ctx.font = "28px system-ui, sans-serif";
+      ctx.font = `${Math.max(18, 28 * camera.zoom)}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(p.reaction, sx, y);
