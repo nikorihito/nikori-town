@@ -654,6 +654,8 @@
         const saved = (await get(ref(db, path))).val();
         console.log('create room saved data:', saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
+        serverState.rooms[roomId] = { id: roomId, ...saved, type: ['chat', 'map', 'voice'].includes(saved?.type) ? saved.type : type };
+        renderServerRooms();
         setServerStatus('ルームを作成しました。');
         selectServerRoom(roomId);
       } catch (error) {
