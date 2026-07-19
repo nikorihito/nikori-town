@@ -59,6 +59,7 @@
       top: 8px;
       left: 8px;
       right: 8px;
+      align-items: flex-start;
     }
 
     body.embedded-room .info,
@@ -67,6 +68,97 @@
       padding: 8px 10px;
       border-radius: 13px;
       font-size: 12px;
+    }
+
+    .embedded-only {
+      display: none;
+    }
+
+    body.embedded-room .embedded-only {
+      display: inline-flex;
+    }
+
+    body.embedded-room .info {
+      max-width: min(560px, calc(100vw - 190px));
+      line-height: 1.45;
+    }
+
+    body.embedded-room .top-actions {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      max-width: 180px;
+    }
+
+    body.embedded-room #helpLabel {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+
+    body.embedded-room #helpLabel[hidden] {
+      display: none;
+    }
+
+    .chat-toggle {
+      position: fixed;
+      left: 12px;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      z-index: 11;
+      min-height: 42px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--accent), var(--accent2));
+      color: #06202a;
+      font-weight: 950;
+      box-shadow: 0 16px 32px rgba(6, 182, 212, 0.22);
+    }
+
+    .chat-close {
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(30, 41, 59, 0.92);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    body.embedded-room.chat-collapsed .chat {
+      display: none;
+    }
+
+    body.embedded-room:not(.chat-collapsed) .chat-toggle {
+      display: none;
+    }
+
+    body.embedded-room .chat {
+      left: 10px;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      width: min(360px, calc(100vw - 20px));
+      max-height: min(48vh, 360px);
+      border-radius: 16px;
+    }
+
+    body.embedded-room .chat-list {
+      height: min(145px, 22vh);
+    }
+
+    body.embedded-room .chat-form {
+      padding: 8px;
+    }
+
+    body.embedded-room .quick {
+      padding: 0 8px 8px;
+      gap: 6px;
+    }
+
+    body.embedded-room .quick button {
+      min-width: 34px;
+      min-height: 32px;
     }
 
     .topbar {
@@ -520,6 +612,28 @@
         right: 8px;
       }
     }
+
+    @media (max-width: 540px) {
+      body.embedded-room .topbar {
+        align-items: flex-start;
+      }
+
+      body.embedded-room .info {
+        max-width: calc(100vw - 150px);
+      }
+
+      body.embedded-room .top-actions {
+        flex-direction: column;
+        max-width: 132px;
+      }
+
+      body.embedded-room .chat {
+        left: 8px;
+        right: auto;
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: min(340px, calc(100vw - 16px));
+      }
+    }
   </style>
   <link rel="stylesheet" href="./wave-ui.css" />
 </head>
@@ -538,15 +652,19 @@
     </div>
 
     <div class="top-actions">
+      <button id="helpToggleBtn" class="btn secondary embedded-only" type="button" aria-label="help">?</button>
       <button id="flyBtn" class="btn secondary" type="button">✈️ 飛行機</button>
       <button id="menuBtn" class="btn" type="button">メニュー</button>
     </div>
   </div>
 
+  <button id="chatToggleBtn" class="chat-toggle embedded-only" type="button">通話チャット</button>
+
   <section class="chat">
     <div class="chat-head">
       <span>通話チャット</span>
       <span id="chatStatus">接続中...</span>
+      <button id="chatCloseBtn" class="chat-close embedded-only" type="button">閉じる</button>
     </div>
 
     <div id="composeState" class="compose-state" hidden>
@@ -673,9 +791,13 @@
     const chatList = document.getElementById("chatList");
     const chatForm = document.getElementById("chatForm");
     const chatInput = document.getElementById("chatInput");
+    const chatToggleBtn = document.getElementById("chatToggleBtn");
+    const chatCloseBtn = document.getElementById("chatCloseBtn");
     const composeState = document.getElementById("composeState");
     const composeStateText = document.getElementById("composeStateText");
     const composeCancelBtn = document.getElementById("composeCancelBtn");
+    const helpLabel = document.getElementById("helpLabel");
+    const helpToggleBtn = document.getElementById("helpToggleBtn");
     const flyBtn = document.getElementById("flyBtn");
     const menuBtn = document.getElementById("menuBtn");
     const menuBackdrop = document.getElementById("menuBackdrop");
@@ -794,10 +916,13 @@
     const room = safeRoom(params.get("roomId") || params.get("room") || localStorage.getItem(LS_ROOM) || "");
     const initialJoinCode = safeRoomCode(params.get("roomCode") || localStorage.getItem(LS_ROOM_CODE) || "");
     const playerName = safeName(params.get("name") || localStorage.getItem(LS_NAME) || "ゲスト");
+    const displayRoomName = safeName(params.get("roomName") || "");
     let selectedSkin = normalizeSkin(params.get("skin") || localStorage.getItem(LS_SKIN) || "nikorihito");
 
     if (embeddedMode) {
       document.body.classList.add("embedded-room");
+      document.body.classList.add("chat-collapsed");
+      helpLabel.hidden = true;
     }
 
     if (!room || (serverMapMode && !serverId)) {
@@ -886,7 +1011,7 @@
       return { x: clamp(base.x, 32, state.worldW - 32), y: clamp(base.y, 64, state.worldH - 32) };
     }
 
-    roomLabel.textContent = room;
+    roomLabel.textContent = displayRoomName || room;
     nameLabel.textContent = playerName;
     roomShareInput.value = room;
 
@@ -1122,7 +1247,7 @@
       const displayCode = isRoomCode(joinCode) ? joinCode : "";
       state.currentJoinCode = displayCode;
       roomShareInput.value = displayCode || room;
-      roomLabel.textContent = displayCode || room;
+      roomLabel.textContent = displayRoomName || displayCode || room;
       if (displayCode) localStorage.setItem(LS_ROOM_CODE, displayCode);
     }
 
@@ -1402,6 +1527,17 @@
     closeMenuBtn.addEventListener("click", closeMenu);
     copyRoomBtn.addEventListener("click", copyRoomName);
     flyBtn.addEventListener("click", toggleFlying);
+    helpToggleBtn.addEventListener("click", () => {
+      helpLabel.hidden = !helpLabel.hidden;
+    });
+    chatToggleBtn.addEventListener("click", () => {
+      document.body.classList.remove("chat-collapsed");
+      chatInput.focus();
+    });
+    chatCloseBtn.addEventListener("click", () => {
+      document.body.classList.add("chat-collapsed");
+      canvas.focus();
+    });
 
     document.querySelectorAll("[data-skin]").forEach((button) => {
       button.addEventListener("click", () => {
