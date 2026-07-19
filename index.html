@@ -270,6 +270,8 @@
     function displayServerIcon(icon){ const value = String(icon || '🌐').trim(); return value || '🌐'; }
     function roleLabel(role){ return role === 'operator' ? 'operator' : role === 'guest' ? 'guest' : 'member'; }
     function canOperate(member = serverState.activeMember){ return member?.role === 'operator'; }
+    function roomType(type){ const value = String(type || '').trim().toLowerCase(); return ['chat', 'map', 'voice'].includes(value) ? value : 'chat'; }
+    function normalizeServerRoom(roomId, room = {}){ return { ...room, roomId, id: roomId, type: roomType(room.type), name: String(room.name || 'ルーム').trim() || 'ルーム' }; }
     function memberDisplayName(member){
       const crown = serverState.activeServer?.hostUid === member?.uid ? ' 👑' : '';
       const op = member?.role === 'operator' && serverState.activeServer?.hostUid !== member?.uid ? ' OP' : '';
@@ -554,10 +556,7 @@
         console.log("LISTEN serverRooms path:", `serverRooms/${serverId}`);
         console.log("LISTEN serverRooms snapshot:", snapshot.val());
         console.log("serverRooms snapshot:", snapshot.val());
-        serverState.rooms = Object.fromEntries(Object.entries(snapshot.val() || {}).map(([roomId, room]) => [
-          roomId,
-          { id: roomId, ...room, type: ['chat', 'map', 'voice'].includes(room?.type) ? room.type : 'chat' }
-        ]));
+        serverState.rooms = Object.fromEntries(Object.entries(snapshot.val() || {}).map(([roomId, room]) => [roomId, normalizeServerRoom(roomId, room)]));
         renderServerRooms();
         if (!serverState.activeRoom) {
           const first = Object.values(serverState.rooms).sort((a, b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0))[0];
@@ -591,7 +590,7 @@
         ['map', 'マップ', '🌍'],
         ['voice', 'ボイス', '🔊']
       ];
-      const rooms = Object.values(serverState.rooms || {}).sort((a, b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0));
+      const rooms = Object.values(serverState.rooms || {}).map(room => normalizeServerRoom(room.roomId || room.id, room)).filter(room => room.roomId).sort((a, b) => Number(a.order || a.createdAt || 0) - Number(b.order || b.createdAt || 0));
       for (const [type, label, icon] of groups) {
         const group = document.createElement('div');
         group.className = 'room-group';
@@ -603,9 +602,9 @@
           const btn = document.createElement('button');
           btn.type = 'button';
           btn.className = 'room-button';
-          btn.classList.toggle('active', serverState.activeRoom?.id === room.id);
+          btn.classList.toggle('active', (serverState.activeRoom?.roomId || serverState.activeRoom?.id) === room.roomId);
           btn.textContent = `${icon} ${room.name || 'ルーム'}`;
-          btn.onclick = () => selectServerRoom(room.id);
+          btn.onclick = () => selectServerRoom(room.roomId);
           group.appendChild(btn);
         });
         root.appendChild(group);
@@ -646,7 +645,7 @@
       const roomId = createServerRoomId();
       const now = Date.now();
       const path = `serverRooms/${serverId}/${roomId}`;
-      const roomData = { roomId, id: roomId, serverId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now };
+      const roomData = { roomId, id: roomId, serverId, type: roomType(type), name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now };
       console.log("CREATE ROOM activeServer:", activeServer);
       console.log("CREATE ROOM serverId:", serverId);
       console.log("CREATE ROOM roomRef path:", path);
@@ -660,7 +659,7 @@
         const saved = (await get(ref(db, path))).val();
         console.log("ROOM SAVED READBACK:", saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
-        serverState.rooms[roomId] = { id: roomId, ...saved, type: ['chat', 'map', 'voice'].includes(saved?.type) ? saved.type : type };
+        serverState.rooms[roomId] = normalizeServerRoom(roomId, saved);
         renderServerRooms();
         setServerStatus('ルームを作成しました。');
         selectServerRoom(roomId);
