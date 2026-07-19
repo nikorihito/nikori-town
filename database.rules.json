@@ -65,7 +65,6 @@
     "serverRooms": {
       "$serverId": {
         ".read": "auth != null",
-        ".write": "auth != null && (newData.exists() || root.child('servers').child($serverId).child('hostUid').val() === auth.uid)",
         "$roomId": {
           ".write": "auth != null"
         }

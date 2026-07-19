@@ -10,7 +10,7 @@
     body{margin:0;min-height:100svh;padding:18px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;background:radial-gradient(circle at 20% 12%,rgba(34,211,238,.18),transparent 32%),var(--bg);color:var(--text)}
     button,input,select{font:inherit}button{cursor:pointer;border:0;border-radius:13px;padding:11px 14px;background:linear-gradient(180deg,var(--a1),var(--a2));color:#06202a;font-weight:900}button.secondary{background:#1e293b;border:1px solid var(--border);color:var(--text)}button.danger{background:var(--danger);color:white}
     input,select{width:100%;border:1px solid var(--border);border-radius:13px;background:#07101f;color:var(--text);padding:12px 13px}input:focus,select:focus{outline:none;border-color:var(--a1);box-shadow:0 0 0 3px rgba(34,211,238,.20)}
-    .shell{width:min(1100px,96vw);margin:0 auto}.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.title{font-size:24px;font-weight:900}.sub{color:var(--muted);font-size:13px;margin-top:3px}.panel{border:1px solid rgba(148,163,184,.22);border-radius:18px;background:rgba(17,24,39,.92);padding:16px}.gate{padding:18px;border:1px dashed rgba(148,163,184,.34);border-radius:16px;color:var(--muted);background:rgba(15,23,42,.45)}
+    .shell{width:min(1100px,96vw);margin:0 auto}.debug-banner{border:1px solid rgba(34,211,238,.55);border-radius:12px;background:rgba(8,145,178,.18);color:#a5f3fc;font-weight:900;padding:9px 12px;margin-bottom:12px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.title{font-size:24px;font-weight:900}.sub{color:var(--muted);font-size:13px;margin-top:3px}.panel{border:1px solid rgba(148,163,184,.22);border-radius:18px;background:rgba(17,24,39,.92);padding:16px}.gate{padding:18px;border:1px dashed rgba(148,163,184,.34);border-radius:16px;color:var(--muted);background:rgba(15,23,42,.45)}
     .server-actions{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:16px}.action-card{border:1px solid rgba(148,163,184,.24);border-radius:16px;background:rgba(2,6,23,.25);padding:14px;display:grid;gap:12px}.action-card h2{font-size:16px;margin:0}.action-card button{justify-self:end;min-width:112px}.status{min-height:22px;color:#a5f3fc;font-size:13px;font-weight:700;margin:8px 0 0}
     .server-list{display:grid;gap:10px;margin-top:10px}.server-card{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:16px;background:rgba(15,23,42,.62)}.server-icon{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:#0f172a;border:1px solid rgba(148,163,184,.24);font-size:24px}.server-name{font-weight:900}.server-host{font-size:12px;color:var(--muted);margin-top:3px}.empty{color:var(--muted);font-size:13px;line-height:1.7}
     .server-app{min-height:560px;display:grid;grid-template-columns:245px 1fr 210px;border:1px solid rgba(148,163,184,.22);border-radius:18px;overflow:hidden;background:rgba(2,6,23,.22)}.server-app[hidden]{display:none}.sidebar{background:rgba(15,23,42,.82);border-right:1px solid rgba(148,163,184,.20);padding:12px}.server-head{display:flex;gap:9px;align-items:center;margin:12px 0}.room-group{margin:14px 0}.room-group-title{font-size:11px;color:var(--muted);font-weight:900;letter-spacing:.08em;margin-bottom:6px}.room-button{width:100%;display:block;text-align:left;margin:4px 0;padding:8px 9px;border-radius:9px;background:transparent;border:0;color:#cbd5e1}.room-button.active{background:rgba(34,211,238,.16);color:#e0f2fe}.room-create{width:100%;margin:5px 0;padding:8px 9px;font-size:12px;background:#1e293b;color:var(--text);border:1px solid var(--border)}
@@ -20,6 +20,7 @@
 </head>
 <body>
   <main class="shell">
+    <div class="debug-banner">SERVER DEBUG v2026-07-19</div>
     <div class="topbar">
       <div><div class="title">サーバー</div><div class="sub" id="userLabel">確認中...</div></div>
       <div class="row"><button id="googleLoginBtn" class="secondary" type="button">Googleログイン</button><button id="homeBtn" class="secondary" type="button">ホームに戻る</button></div>
@@ -288,6 +289,8 @@
     function subscribeRooms(id){
       const roomsRef = ref(db, `serverRooms/${id}`);
       const callback = snap => {
+        console.log('serverRooms onValue path:', `serverRooms/${id}`);
+        console.log('serverRooms snapshot:', snap.val());
         state.rooms = Object.fromEntries(Object.entries(snap.val() || {}).map(([roomId, room]) => [
           roomId,
           { id:roomId, ...room, type:['chat','map','voice'].includes(room?.type) ? room.type : 'chat' }
@@ -298,7 +301,10 @@
           if (first) selectRoom(first.id);
         }
       };
-      onValue(roomsRef, callback);
+      onValue(roomsRef, callback, error => {
+        console.error('serverRooms onValue failed', { serverId:id, path:`serverRooms/${id}` }, error);
+        setStatus(describeError(error, 'ルーム一覧の読み込みに失敗しました。Firebaseの読み取り権限または参照パスを確認してください。'));
+      });
       state.roomsUnsub = () => off(roomsRef, 'value', callback);
     }
     function subscribeMembers(id){
@@ -355,15 +361,22 @@
       const roomRef = push(ref(db, `serverRooms/${server.id}`));
       const now = Date.now();
       const room = { id:roomRef.key, type, name, createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now };
+      const path = `serverRooms/${server.id}/${room.id}`;
+      console.log('create room serverId:', server.id);
+      console.log('create room roomId:', room.id);
+      console.log('create room path:', path);
+      console.log('create room data:', room);
       setStatus('ルームを作成しています...');
       try {
-        await writeStep('serverRooms create write', `serverRooms/${server.id}/${room.id}`, () => set(roomRef, room));
+        await writeStep('serverRooms create write', path, () => set(roomRef, room));
+        console.log('create room write succeeded:', path);
         setStatus('ルームを作成しました。');
-        const saved = (await get(ref(db, `serverRooms/${server.id}/${room.id}`))).val();
+        const saved = (await get(ref(db, path))).val();
+        console.log('create room saved data:', saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
         selectRoom(room.id);
       } catch (error) {
-        console.error('create server room failed', { serverId:server.id, roomId:room.id, type, path:`serverRooms/${server.id}/${room.id}` }, error);
+        console.error('create server room failed', { serverId:server.id, roomId:room.id, type, path, room }, error);
         setStatus(describeError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
       }
     }

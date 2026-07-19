@@ -549,6 +549,8 @@
     function subscribeServerRooms(serverId){
       const roomsRef = ref(db, `serverRooms/${serverId}`);
       const callback = snapshot => {
+        console.log('serverRooms onValue path:', `serverRooms/${serverId}`);
+        console.log('serverRooms snapshot:', snapshot.val());
         serverState.rooms = Object.fromEntries(Object.entries(snapshot.val() || {}).map(([roomId, room]) => [
           roomId,
           { id: roomId, ...room, type: ['chat', 'map', 'voice'].includes(room?.type) ? room.type : 'chat' }
@@ -559,7 +561,10 @@
           if (first) selectServerRoom(first.id);
         }
       };
-      onValue(roomsRef, callback);
+      onValue(roomsRef, callback, error => {
+        console.error('serverRooms onValue failed', { serverId, path: `serverRooms/${serverId}` }, error);
+        setServerStatus(describeServerError(error, 'ルーム一覧の読み込みに失敗しました。Firebaseの読み取り権限または参照パスを確認してください。'));
+      });
       serverState.roomsUnsub = () => off(roomsRef, 'value', callback);
     }
     function subscribeServerMembers(serverId){
@@ -637,15 +642,22 @@
       const roomId = createServerRoomId();
       const now = Date.now();
       const path = `serverRooms/${server.id}/${roomId}`;
+      const roomData = { id: roomId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now };
+      console.log('create room serverId:', server.id);
+      console.log('create room roomId:', roomId);
+      console.log('create room path:', path);
+      console.log('create room data:', roomData);
       setServerStatus('ルームを作成しています...');
       try {
-        await update(ref(db, path), { id: roomId, type, name, createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now });
+        await update(ref(db, path), roomData);
+        console.log('create room write succeeded:', path);
         const saved = (await get(ref(db, path))).val();
+        console.log('create room saved data:', saved);
         if (!saved) throw new Error('SERVER_ROOM_WRITE_NOT_PERSISTED');
         setServerStatus('ルームを作成しました。');
         selectServerRoom(roomId);
       } catch (error) {
-        console.error('create server room failed', { serverId: server.id, roomId, type, path }, error);
+        console.error('create server room failed', { serverId: server.id, roomId, type, path, roomData }, error);
         setServerStatus(describeServerError(error, 'ルーム作成に失敗しました。Firebaseの保存権限または保存パスを確認してください。'));
       }
     }
