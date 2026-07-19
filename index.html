@@ -412,7 +412,7 @@
 
         try {
           const roomId = createServerRoomId();
-          await runServerWriteStep('serverRooms write', `serverRooms/${serverId}/${roomId}`, () => update(ref(db, `serverRooms/${serverId}/${roomId}`), { id: roomId, type: 'chat', name: '雑談', createdBy: user.uid, createdAt: now, order: now }));
+          await runServerWriteStep('serverRooms write', `serverRooms/${serverId}/${roomId}`, () => update(ref(db, `serverRooms/${serverId}/${roomId}`), { roomId, id: roomId, serverId, type: 'chat', name: '雑談', createdBy: user.uid, createdByName: userName(user), createdAt: now, order: now }));
         } catch (error) {
           warnings.push(`serverRooms: ${error?.code || error?.message || error}`);
         }

@@ -193,7 +193,7 @@
         try { await writeStep('userServers write', `userServers/${user.uid}/${id}`, () => update(ref(db, `userServers/${user.uid}/${id}`), { serverId:id, joinedAt:now, lastOpenedAt:now })); } catch(error){ warnings.push(`userServers: ${error?.code || error?.message || error}`); }
         try { await writeStep('serverCodes write', `serverCodes/${joinCode}`, () => update(ref(db, `serverCodes/${joinCode}`), { serverId:id, joinCode, joinCodeDate:date, createdByUid:user.uid, updatedAt:now })); } catch(error){ warnings.push(`serverCodes: ${error?.code || error?.message || error}`); }
         const roomKey = push(ref(db, `serverRooms/${id}`)).key;
-        try { await writeStep('serverRooms write', `serverRooms/${id}/${roomKey}`, () => update(ref(db, `serverRooms/${id}/${roomKey}`), { id:roomKey, type:'chat', name:'雑談', createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now })); } catch(error){ warnings.push(`serverRooms: ${error?.code || error?.message || error}`); }
+        try { await writeStep('serverRooms write', `serverRooms/${id}/${roomKey}`, () => update(ref(db, `serverRooms/${id}/${roomKey}`), { roomId:roomKey, id:roomKey, serverId:id, type:'chat', name:'雑談', createdBy:user.uid, createdByName:userName(user), createdAt:now, order:now })); } catch(error){ warnings.push(`serverRooms: ${error?.code || error?.message || error}`); }
         $('serverJoinCode').value = joinCode;
         renderServerList([server]);
         subscribeUserServers(user);
@@ -497,6 +497,9 @@
       const server = state.activeServer;
       const serverId = getServerId(server);
       if (!user || !server) return;
+      console.log("DELETE SERVER serverId:", serverId);
+      console.log("DELETE SERVER hostUid:", server.hostUid);
+      console.log("DELETE SERVER current uid:", user.uid);
       if (server.hostUid !== user.uid) return setStatus('サーバーを削除できるのはホストだけです。');
       const message = `このサーバー「${server.name || 'サーバー'}」を完全に削除しますか？この操作は元に戻せません。`;
       if (!confirm(message)) return;
@@ -527,11 +530,23 @@
         for (const uid of Object.keys(membersSnap?.val() || {})) updates[`userServers/${uid}/${serverId}`] = null;
         if (latest.joinCode) updates[`serverCodes/${latest.joinCode}`] = null;
         for (const code of Object.keys(codeSnap?.val() || {})) updates[`serverCodes/${code}`] = null;
+        console.log("DELETE SERVER paths:", Object.keys(updates));
+        console.log("DELETE SERVER update payload:", updates);
         await writeStep('server delete update', 'server delete multi-path update', () => update(ref(db), updates));
+        const deleteReadback = await Promise.all([
+          get(ref(db, `servers/${serverId}`)).then(snap => ['servers', snap.val()]).catch(error => ['servers error', error?.message || error]),
+          get(ref(db, `serverMembers/${serverId}`)).then(snap => ['serverMembers', snap.val()]).catch(error => ['serverMembers error', error?.message || error]),
+          get(ref(db, `serverRooms/${serverId}`)).then(snap => ['serverRooms', snap.val()]).catch(error => ['serverRooms error', error?.message || error]),
+          get(ref(db, `serverMessages/${serverId}`)).then(snap => ['serverMessages', snap.val()]).catch(error => ['serverMessages error', error?.message || error]),
+          get(ref(db, `serverVoiceState/${serverId}`)).then(snap => ['serverVoiceState', snap.val()]).catch(error => ['serverVoiceState error', error?.message || error]),
+          get(ref(db, `serverMapRooms/${serverId}`)).then(snap => ['serverMapRooms', snap.val()]).catch(error => ['serverMapRooms error', error?.message || error])
+        ]);
+        console.log("DELETE SERVER READBACK:", Object.fromEntries(deleteReadback));
         closeActiveServer();
         subscribeUserServers(user);
         setStatus('サーバーを削除しました。');
       } catch (error) {
+        console.error("DELETE SERVER failed:", error);
         console.error('deleteActiveServer failed', { serverId, uid:user.uid, code:error?.code, message:error?.message }, error);
         setStatus(describeError(error, 'サーバー削除に失敗しました。'));
       } finally {
