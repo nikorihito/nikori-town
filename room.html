@@ -1137,6 +1137,7 @@
       mapLoaded: false,
       collisionLoaded: false,
       inMeetingArea: false,
+      meetingAreaId: "",
       hostUid: "",
       currentJoinCode: initialJoinCode,
       lastPush: 0,
@@ -1205,6 +1206,7 @@
       state.mapLoaded = false;
       state.collisionLoaded = false;
       state.inMeetingArea = false;
+      state.meetingAreaId = "";
 
       resetMaskCache();
 
@@ -1990,11 +1992,12 @@
 
     function updateAreaState() {
       const nextScope = getMeetingScopeAt(player.x, player.y);
-      const wasInMeeting = state.inMeetingArea;
+      const previousScope = player.meetingScope;
       state.inMeetingArea = Boolean(nextScope);
+      state.meetingAreaId = nextScope?.areaId || "";
       player.meetingScope = nextScope;
 
-      if (wasInMeeting !== state.inMeetingArea) {
+      if (!sameMeetingScope(previousScope, nextScope)) {
         renderMessages();
         pushPlayer(true);
       }
@@ -2061,6 +2064,7 @@
       getMaskPixel.offscreen = null;
       getMaskPixel.ctx = null;
       getMaskPixel.key = "";
+      buildMeetingZones.cache = null;
     }
 
     function getMaskKey() {
@@ -2115,6 +2119,126 @@
         Math.abs(pixel.b - b) <= tolerance;
     }
 
+    function buildMeetingZones() {
+      const image = images.collision;
+      const key = getMaskKey();
+      const cached = buildMeetingZones.cache;
+
+      if (cached && cached.key === key) {
+        return cached;
+      }
+
+      if (!state.collisionLoaded || !image.naturalWidth || !image.naturalHeight) {
+        buildMeetingZones.cache = { key, width: 0, height: 0, labels: null, zones: new Map(), overlays: new Map() };
+        return buildMeetingZones.cache;
+      }
+
+      const w = image.naturalWidth;
+      const h = image.naturalHeight;
+      const off = document.createElement("canvas");
+      off.width = w;
+      off.height = h;
+      const offCtx = off.getContext("2d", { willReadFrequently: true });
+      offCtx.drawImage(image, 0, 0);
+      const data = offCtx.getImageData(0, 0, w, h).data;
+      const labels = new Int32Array(w * h);
+      const zones = new Map();
+      const stack = new Int32Array(w * h);
+      let zoneId = 0;
+
+      function isMeetingIndex(index) {
+        const offset = index * 4;
+        if (data[offset + 3] < 10) return false;
+        return Math.abs(data[offset] - 129) <= 28 &&
+          Math.abs(data[offset + 1] - 255) <= 28 &&
+          Math.abs(data[offset + 2] - 125) <= 28;
+      }
+
+      for (let i = 0; i < labels.length; i++) {
+        if (labels[i] || !isMeetingIndex(i)) continue;
+
+        zoneId += 1;
+        let top = 0;
+        stack[top++] = i;
+        labels[i] = zoneId;
+
+        const zone = {
+          id: zoneId,
+          minX: i % w,
+          maxX: i % w,
+          minY: Math.floor(i / w),
+          maxY: Math.floor(i / w),
+          count: 0
+        };
+
+        while (top > 0) {
+          const current = stack[--top];
+          const x = current % w;
+          const y = Math.floor(current / w);
+          zone.count += 1;
+          zone.minX = Math.min(zone.minX, x);
+          zone.maxX = Math.max(zone.maxX, x);
+          zone.minY = Math.min(zone.minY, y);
+          zone.maxY = Math.max(zone.maxY, y);
+
+          const neighbors = [
+            x > 0 ? current - 1 : -1,
+            x < w - 1 ? current + 1 : -1,
+            y > 0 ? current - w : -1,
+            y < h - 1 ? current + w : -1
+          ];
+
+          for (const next of neighbors) {
+            if (next < 0 || labels[next] || !isMeetingIndex(next)) continue;
+            labels[next] = zoneId;
+            stack[top++] = next;
+          }
+        }
+
+        zones.set(zoneId, zone);
+      }
+
+      buildMeetingZones.cache = { key, width: w, height: h, labels, zones, overlays: new Map() };
+      return buildMeetingZones.cache;
+    }
+
+    function getMeetingZoneIdAt(x, y) {
+      const zoneData = buildMeetingZones();
+      if (!zoneData.labels || !zoneData.width || !zoneData.height) return 0;
+
+      const sx = Math.floor((x / state.worldW) * zoneData.width);
+      const sy = Math.floor((y / state.worldH) * zoneData.height);
+      if (sx < 0 || sy < 0 || sx >= zoneData.width || sy >= zoneData.height) return 0;
+
+      return zoneData.labels[sy * zoneData.width + sx] || 0;
+    }
+
+    function getMeetingZoneOverlay(zoneId) {
+      const zoneData = buildMeetingZones();
+      if (!zoneId || !zoneData.labels || !zoneData.zones.has(zoneId)) return null;
+      if (zoneData.overlays.has(zoneId)) return zoneData.overlays.get(zoneId);
+
+      const canvasOverlay = document.createElement("canvas");
+      canvasOverlay.width = zoneData.width;
+      canvasOverlay.height = zoneData.height;
+      const overlayCtx = canvasOverlay.getContext("2d");
+      const imageData = overlayCtx.createImageData(zoneData.width, zoneData.height);
+      const pixels = imageData.data;
+
+      for (let i = 0; i < zoneData.labels.length; i++) {
+        if (zoneData.labels[i] !== zoneId) continue;
+        const offset = i * 4;
+        pixels[offset] = 129;
+        pixels[offset + 1] = 255;
+        pixels[offset + 2] = 125;
+        pixels[offset + 3] = 56;
+      }
+
+      overlayCtx.putImageData(imageData, 0, 0);
+      zoneData.overlays.set(zoneId, canvasOverlay);
+      return canvasOverlay;
+    }
+
     function getMaskKindAtPoint(x, y) {
       if (!state.collisionLoaded) {
         return "walkable";
@@ -2146,13 +2270,15 @@
     }
 
     function getMeetingScopeAt(x, y) {
-      if (!isInMeetingArea(x, y)) return null;
+      const zoneId = getMeetingZoneIdAt(x, y);
+      if (!zoneId) return null;
       const mapData = getActiveMapData();
       return {
         type: "meeting",
         mapId: mapData.id,
         floorId: mapData.floorId || "",
-        areaId: "mask-green"
+        areaId: `zone-${zoneId}`,
+        zoneId
       };
     }
 
@@ -2172,6 +2298,7 @@
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
       drawMap();
+      drawMeetingOverlay();
 
       const players = Object.values(state.players || {})
         .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))
@@ -2205,8 +2332,6 @@
       for (const p of players) {
         drawPlayer(p, isInBehindArea(p.x, p.y));
       }
-
-      drawMeetingOverlay();
     }
 
     function drawMap() {
@@ -2260,10 +2385,24 @@
     }
 
     function drawMeetingOverlay() {
-      if (!state.inMeetingArea) return;
+      const zoneId = Number(player.meetingScope?.zoneId || String(player.meetingScope?.areaId || "").replace("zone-", ""));
+      if (!state.inMeetingArea || !zoneId) return;
+
+      const overlay = getMeetingZoneOverlay(zoneId);
+      if (!overlay) return;
+
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const sourceW = vw / camera.zoom;
+      const sourceH = vh / camera.zoom;
+      const sx = (camera.x / state.worldW) * overlay.width;
+      const sy = (camera.y / state.worldH) * overlay.height;
+      const sw = (sourceW / state.worldW) * overlay.width;
+      const sh = (sourceH / state.worldH) * overlay.height;
+
       ctx.save();
-      ctx.fillStyle = "rgba(129, 255, 125, 0.14)";
-      ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(overlay, sx, sy, sw, sh, 0, 0, vw, vh);
       ctx.restore();
     }
 
