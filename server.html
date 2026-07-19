@@ -302,25 +302,52 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = '開く';
-        btn.onclick = () => openServer(server.serverId || server.id);
+        btn.onclick = () => {
+          const serverId = server.serverId || server.id;
+          updateDiagnostics({ clicked:'open server button', serverId, activeServer:server, listenPath:`serverRooms/${serverId}` });
+          openServer(serverId);
+        };
         row.appendChild(btn);
         list.appendChild(row);
       }
     }
     async function openServer(serverId){
       const user = auth.currentUser;
+      updateDiagnostics({ clicked:'openServer start', serverId, listenPath:`serverRooms/${serverId}` });
+      if (!user) {
+        updateDiagnostics({ clicked:'openServer no user', serverId, errorMessage:'auth.currentUser is null' });
+        return setStatus('Googleログインが必要です。');
+      }
       let server = (await get(ref(db, `servers/${serverId}`)).catch(() => null))?.val();
-      const member = (await get(ref(db, `serverMembers/${serverId}/${user.uid}`)).catch(() => null))?.val();
       if (!server) {
         await remove(ref(db, `userServers/${user.uid}/${serverId}`)).catch(console.warn);
+        updateDiagnostics({ clicked:'openServer server missing', serverId, errorMessage:'servers entry not found' });
         return setStatus('このサーバーは削除されました。');
       }
-      if (!member) return setStatus('サーバーに参加していません。');
+      server = { ...server, serverId, id:serverId };
+      state.activeServer = server;
+      updateDiagnostics({ clicked:'openServer server loaded', serverId, activeServer:server, listenPath:`serverRooms/${serverId}` });
+      let member = (await get(ref(db, `serverMembers/${serverId}/${user.uid}`)).catch(error => {
+        updateDiagnostics({ clicked:'openServer member read failed', serverId, errorCode:error?.code || null, errorMessage:error?.message || String(error || '') });
+        console.error('openServer member read failed', { serverId, uid:user.uid }, error);
+        return null;
+      }))?.val();
+      if (!member && server.hostUid === user.uid) {
+        member = { uid:user.uid, name:userName(user), role:'operator', joinedAt:Date.now(), updatedAt:Date.now() };
+        await update(ref(db, `serverMembers/${serverId}/${user.uid}`), member).catch(error => {
+          updateDiagnostics({ clicked:'openServer host member restore failed', serverId, errorCode:error?.code || null, errorMessage:error?.message || String(error || '') });
+          console.error('openServer host member restore failed', { serverId, uid:user.uid }, error);
+        });
+      }
+      if (!member) {
+        updateDiagnostics({ clicked:'openServer member missing', serverId, activeServer:server, errorMessage:'serverMembers entry not found' });
+        return setStatus('サーバーに参加していません。serverMembers に自分のメンバー情報がありません。');
+      }
       if (member.role === 'operator') server = await ensureDailyCode({ ...server, serverId, id:serverId }, user.uid).catch(error => { console.error('ensureDailyCode failed', error); return server; });
       closeActiveServer();
       state.activeServer = { ...server, serverId, id:serverId };
       state.activeMember = member;
-      updateDiagnostics({ clicked:'openServer', serverId, listenPath:`serverRooms/${serverId}` });
+      updateDiagnostics({ clicked:'openServer activeServer set', serverId, activeServer:state.activeServer, listenPath:`serverRooms/${serverId}` });
       $('serverHome').hidden = true;
       $('serverApp').hidden = false;
       $('activeServerIcon').textContent = server.icon || '🌐';
